@@ -588,6 +588,13 @@ run_experiment(MolecularGraphRegression,
                 "name": "GAT Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
+# Setup for BBBP (Classification)
+bbbp_max_vals = get_max_values(bbbp)
+class_batch_size = 200
+class_n_epochs = 60
+class_onehot_sizes = bbbp_max_vals[1:]
+in_features_classification = embedding_dim + sum([size + 1 for size in bbbp_max_vals[1:]])
+
 # --- CLASSIFICATION EXPERIMENTS (BBBP) ---
 run_experiment(MolecularGraphClassification, 
                {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
