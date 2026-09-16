@@ -531,7 +531,8 @@ reg_batch_size = 4
 reg_n_epochs = 60
 reg_onehot_sizes=esol_max_vals[1:]
 
-DEBUG_MODE = True
+import sys
+DEBUG_MODE = '--test' in sys.argv
 if DEBUG_MODE:
     print("\n[WARNING] Running in FAST DEBUG MODE. Disabling large epochs and replicates.")
     reg_n_epochs = 1
