@@ -392,7 +392,7 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
     )
 
     val_dataloader = geom.loader.DataLoader(
-        val_dataset, batch_size=batch_size*val_factor, drop_last=True # Add drop_last=True
+        val_dataset, batch_size=batch_size*val_factor, drop_last=False # Fixed ZeroDivisionError
     )
 
     train_losses = []
@@ -454,8 +454,8 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
 
 
         # Average metrics
-        avg_train_loss = epoch_train_loss / len(train_dataloader)
-        avg_val_loss = epoch_val_loss / len(val_dataloader)
+        avg_train_loss = epoch_train_loss / max(1, len(train_dataloader))
+        avg_val_loss = epoch_val_loss / max(1, len(val_dataloader))
 
         avg_train_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in epoch_train_metrics.items()}
         avg_val_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in epoch_val_metrics.items()}
@@ -531,6 +531,16 @@ reg_batch_size = 4
 reg_n_epochs = 60
 reg_onehot_sizes=esol_max_vals[1:]
 
+DEBUG_MODE = True
+if DEBUG_MODE:
+    print("\n[WARNING] Running in FAST DEBUG MODE. Disabling large epochs and replicates.")
+    reg_n_epochs = 1
+    repeat_factor = 1
+    # Shrink datasets
+    esol_train_dataset = torch.utils.data.Subset(esol_train_dataset, range(min(10, len(esol_train_dataset))))
+    esol_val_dataset = torch.utils.data.Subset(esol_val_dataset, range(min(5, len(esol_val_dataset))))
+    esol_test_dataset = torch.utils.data.Subset(esol_test_dataset, range(min(5, len(esol_test_dataset))))
+
 # Setup
 hidden_features = 64
 embedding_dim=32
@@ -594,6 +604,12 @@ class_batch_size = 200
 class_n_epochs = 60
 class_onehot_sizes = bbbp_max_vals[1:]
 in_features_classification = embedding_dim + sum([size + 1 for size in bbbp_max_vals[1:]])
+
+if DEBUG_MODE:
+    class_n_epochs = 1
+    bbbp_train_dataset = torch.utils.data.Subset(bbbp_train_dataset, range(min(10, len(bbbp_train_dataset))))
+    bbbp_val_dataset = torch.utils.data.Subset(bbbp_val_dataset, range(min(5, len(bbbp_val_dataset))))
+    bbbp_test_dataset = torch.utils.data.Subset(bbbp_test_dataset, range(min(5, len(bbbp_test_dataset))))
 
 # --- CLASSIFICATION EXPERIMENTS (BBBP) ---
 run_experiment(MolecularGraphClassification, 

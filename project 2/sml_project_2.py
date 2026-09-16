@@ -113,13 +113,49 @@ while True:
 class Baseline(torch.nn.Module):
   def __init__(self, *args, **kwargs):
     super().__init__()
-    ...
+    # Invariant features only (lmax=0)
+    self.mp = e3nn.nn.models.v2103.gate_points_message_passing.MessagePassing(
+        irreps_node_input="1x0e",
+        irreps_node_hidden="16x0e",
+        irreps_node_output="1x0e",
+        irreps_node_attr="1x0e",
+        irreps_edge_attr="1x0e", 
+        layers=3,
+        fc_neurons=[10, 32],
+        num_neighbors=10.0
+    )
 
   def forward(self, batch):
-    # TODO: Setup a baseline model for calculating energies
-    energy = ...
-
-    # Should output a total energy for each graph
+    node_features = torch.ones(batch.pos.shape[0], 1, device=batch.pos.device)
+    node_attr = torch.ones(batch.pos.shape[0], 1, device=batch.pos.device)
+    
+    edge_src, edge_dst = [], []
+    for i in range(batch.num_graphs):
+        nodes = (batch.batch == i).nonzero(as_tuple=True)[0]
+        n = len(nodes)
+        src = nodes.repeat_interleave(n)
+        dst = nodes.repeat(n)
+        edge_src.append(src)
+        edge_dst.append(dst)
+    
+    edge_src = torch.cat(edge_src)
+    edge_dst = torch.cat(edge_dst)
+    
+    edge_vec = batch.pos[edge_dst] - batch.pos[edge_src]
+    edge_length = edge_vec.norm(dim=1)
+    
+    edge_scalars = e3nn.math.soft_one_hot_linspace(
+        edge_length,
+        start=0.0,
+        end=10.0,
+        number=10,
+        basis='cosine',
+        cutoff=True
+    )
+    
+    edge_attr = e3nn.o3.spherical_harmonics("0e", edge_vec, normalize=True, normalization='component')
+    node_outputs = self.mp(node_features, node_attr, edge_src, edge_dst, edge_attr, edge_scalars)
+    energy = scatter(node_outputs, batch.batch, dim=0, reduce="sum")
     return energy
 
 # MODEL: Setup the E3MPNN network
@@ -127,19 +163,55 @@ class Baseline(torch.nn.Module):
 class E3MPNN(torch.nn.Module):
   def __init__(self, *args, **kwargs):
     super().__init__()
-    ...
-    # TODO: Find an appropriate way of embedding the inputs
-    # TODO: Setup a E3-equivariant MPNN model for calculating energies
+    # Equivariant features (lmax>0)
+    irreps_hidden = e3nn.o3.Irreps("16x0e + 8x1o")
+    self.mp = e3nn.nn.models.v2103.gate_points_message_passing.MessagePassing(
+        irreps_node_input="1x0e",
+        irreps_node_hidden=irreps_hidden,
+        irreps_node_output="1x0e",
+        irreps_node_attr="1x0e",
+        irreps_edge_attr=e3nn.o3.Irreps.spherical_harmonics(1),
+        layers=3,
+        fc_neurons=[10, 32],
+        num_neighbors=10.0
+    )
 
   def forward(self, batch):
-    # TODO: Setup a baseline model for calculating energies
-    energy = ...
-    # Should output a total energy for each graph
+    node_features = torch.ones(batch.pos.shape[0], 1, device=batch.pos.device)
+    node_attr = torch.ones(batch.pos.shape[0], 1, device=batch.pos.device)
+    
+    edge_src, edge_dst = [], []
+    for i in range(batch.num_graphs):
+        nodes = (batch.batch == i).nonzero(as_tuple=True)[0]
+        n = len(nodes)
+        src = nodes.repeat_interleave(n)
+        dst = nodes.repeat(n)
+        edge_src.append(src)
+        edge_dst.append(dst)
+    
+    edge_src = torch.cat(edge_src)
+    edge_dst = torch.cat(edge_dst)
+    
+    edge_vec = batch.pos[edge_dst] - batch.pos[edge_src]
+    edge_length = edge_vec.norm(dim=1)
+    
+    edge_scalars = e3nn.math.soft_one_hot_linspace(
+        edge_length,
+        start=0.0,
+        end=10.0,
+        number=10,
+        basis='cosine',
+        cutoff=True
+    )
+    
+    edge_attr = e3nn.o3.spherical_harmonics(self.mp.irreps_edge_attr, edge_vec, normalize=True, normalization='component')
+    node_outputs = self.mp(node_features, node_attr, edge_src, edge_dst, edge_attr, edge_scalars)
+    energy = scatter(node_outputs, batch.batch, dim=0, reduce="sum")
     return energy
 
 # UNITTEST: Set up test_model
 
-test_model = MLFF(net=E3MPNN(...))
+test_model = MLFF(net=E3MPNN())
 energy, force = test_model(test_batch, return_force=True)
 
 assert energy.shape == (2, 1)
@@ -221,31 +293,67 @@ ground_state_energy = data.get_ground_state_energy(dataset)
 transform = Transform(ground_state_energy)
 dataset.transform = transform
 
-n_train = ...
-n_val = ...
-seed = ...
-train_batch_size = ...
-val_batch_size = ...
+n_train = 900
+n_val = 50
+seed = 42
+train_batch_size = 32
+val_batch_size = 50
 
 train_dataset, val_dataset = data.split_dataset(
   dataset, n_train=n_train, n_val=n_val, seed=seed
 )
-train_dataloader = geom.loader.DataLoader(train_dataset, train_batch_size=..., shuffle=True)
-val_dataloader = geom.loader.DataLoader(val_dataset, val_batch_size=...)
+train_dataloader = geom.loader.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+val_dataloader = geom.loader.DataLoader(val_dataset, batch_size=val_batch_size)
 
-# Setup model
-net = Baseline()
-model = MLFF(net)
+n_epochs = 10
 
+def train_eval_model(model, name):
+    print(f"\n--- Training {name} ---")
+    model = model.to(device)
+    for epoch in range(n_epochs):
+        model.train()
+        train_loss = 0
+        for batch in train_dataloader:
+            batch = batch.to(device)
+            energy = model(batch)
+            loss = model.loss_fn(batch.energy, energy)
+            model.training_step(loss)
+            train_loss += loss.item()
+            
+        model.eval()
+        val_loss = 0
+        for batch in val_dataloader:
+            batch = batch.to(device)
+            energy = model(batch)
+            loss = model.loss_fn(batch.energy, energy)
+            val_loss += loss.item()
+            
+        print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {train_loss/len(train_dataloader):.4f} | Val Loss: {val_loss/len(val_dataloader):.4f}")
 
-for batch in train_dataloader:
-  # TODO: Setup the training script, log losses, metrics and learning rates as
-  # you see fit.
-  # Regress on the energies and check performance on energies and forces
-  energy = model(batch)
-  loss = model.loss_fn(batch.energy, energy)
-  model.training_step(loss)
+    # Evaluate forces on validation set
+    print(f"\nEvaluating Forces for {name}:")
+    model.eval()
+    all_pred_forces = []
+    all_true_forces = []
+    for batch in val_dataloader:
+        batch = batch.to(device)
+        _, pred_force = model(batch, return_force=True)
+        all_pred_forces.append(pred_force.detach().cpu())
+        all_true_forces.append(batch.force.cpu())
+    
+    pred_f = torch.cat(all_pred_forces)
+    true_f = torch.cat(all_true_forces)
+    msd = torch.mean((pred_f - true_f)**2)
+    rmsd = torch.sqrt(msd)
+    print(f"Force MSD: {msd:.4f} | Force RMSD: {rmsd:.4f}\n")
 
+# Train baseline
+baseline_model = MLFF(Baseline())
+train_eval_model(baseline_model, "Baseline (lmax=0)")
+
+# Train E3MPNN
+e3mpnn_model = MLFF(E3MPNN())
+train_eval_model(e3mpnn_model, "E3MPNN (lmax=1)")
 # HINT: This can code can help you render a molecule - it wont work in colab as
 # colab doesn't allow for third party widgets
 
