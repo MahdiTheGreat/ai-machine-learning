@@ -93,28 +93,57 @@ esol = filter_small_graphs(esol_raw)
 bbbp_raw = MoleculeNet(root='./storage/', name='BBBP')
 bbbp = filter_small_graphs(bbbp_raw)
 
-# Use scaffold split (based on SMILES) instead of random split
+from sml_project1.data import ScaffoldSplitter
+
+# Split datasets with scaffold stratification (Train: 80%, Val: 10%, Test: 10%)
 seed = 42
 torch.manual_seed(seed)
-split = 'scaffold'  # Changed from 'random' to 'scaffold'
+splitter = ScaffoldSplitter()
 
-# Split datasets with scaffold stratification
-esol_train_dataset, esol_val_dataset = data.split_dataset(
-    esol, frac_train=0.8, seed=seed, split=split
-)
+esol_smiles = [d.smiles for d in esol]
+esol_train_idx, esol_val_idx, esol_test_idx = splitter.train_valid_test_split(esol, esol_smiles, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=seed)
+esol_train_dataset = torch.utils.data.Subset(esol, esol_train_idx)
+esol_val_dataset = torch.utils.data.Subset(esol, esol_val_idx)
+esol_test_dataset = torch.utils.data.Subset(esol, esol_test_idx)
 
-bbbp_train_dataset, bbbp_val_dataset = data.split_dataset(
-    bbbp, frac_train=0.8, seed=seed, split=split
-)
+bbbp_smiles = [d.smiles for d in bbbp]
+bbbp_train_idx, bbbp_val_idx, bbbp_test_idx = splitter.train_valid_test_split(bbbp, bbbp_smiles, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=seed)
+bbbp_train_dataset = torch.utils.data.Subset(bbbp, bbbp_train_idx)
+bbbp_val_dataset = torch.utils.data.Subset(bbbp, bbbp_val_idx)
+bbbp_test_dataset = torch.utils.data.Subset(bbbp, bbbp_test_idx)
 
 print(f"ESOL: {len(esol)} molecules")
-print(f"  Train: {len(esol_train_dataset)}, Val: {len(esol_val_dataset)}")
+print(f"  Train: {len(esol_train_dataset)}, Val: {len(esol_val_dataset)}, Test: {len(esol_test_dataset)}")
 print(f"BBBP: {len(bbbp)} molecules")
-print(f"  Train: {len(bbbp_train_dataset)}, Val: {len(bbbp_val_dataset)}")
+print(f"  Train: {len(bbbp_train_dataset)}, Val: {len(bbbp_val_dataset)}, Test: {len(bbbp_test_dataset)}")
 
-for i in range(10):
-  print(esol[i])
-  print(esol[i].x)
+def print_data_info(dataset, name, visualize=False):
+    print("\n" + "="*50)
+    print(f"Dataset: {name}")
+    print("="*50)
+    print(f"Number of graphs: {len(dataset)}")
+    print(f"Number of node features: {dataset.num_node_features}")
+    print(f"Number of edge features: {dataset.num_edge_features}")
+    
+    if len(dataset) > 0:
+        graph = dataset[0]
+        print(f"Example Graph 0: {graph}")
+        print(f"Example Node Features (x): \n{graph.x[:5]} ... (truncated)")
+        print(f"Example Target (y): {graph.y}")
+        
+        if visualize:
+            from torch_geometric.utils import to_networkx
+            import networkx as nx
+            import matplotlib.pyplot as plt
+            
+            print(f"Visualizing Graph 0 from {name}...")
+            G = to_networkx(graph, to_undirected=True)
+            nx.draw(G, with_labels=True, node_color='lightblue', edge_color='gray')
+            plt.show()
+    print("="*50 + "\n")
+
+print_data_info(esol, "ESOL", visualize=False)
+print_data_info(bbbp, "BBBP", visualize=False)
 
 from torch_geometric.nn import GraphConv, GATConv, global_mean_pool
 import torch.nn as nn
@@ -348,7 +377,7 @@ def plot_results(results, model_name):
     plt.tight_layout()
     plt.show()
 
-def train(model, train_dataset, batch_size, val_dataset, n_epochs, val_factor=2,use_wandb=False):
+def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs, val_factor=2, use_wandb=False):
     print(f"Training {model.name} with {batch_size} batch size for {n_epochs} epochs...")
     print(model)
 
@@ -451,12 +480,30 @@ def train(model, train_dataset, batch_size, val_dataset, n_epochs, val_factor=2,
              **{f"val_{k}": v for k, v in avg_val_metrics.items()}
          })
 
+    # === TEST EVALUATION ===
+    test_dataloader = geom.loader.DataLoader(test_dataset, batch_size=batch_size*val_factor, drop_last=False)
+    model.eval()
+    test_metrics = {}
+    with torch.no_grad():
+        for test_batch in test_dataloader:
+            test_batch = test_batch.to(device)
+            y_hat = model(test_batch)
+            metrics_dict = model.evaluate(test_batch.y.cpu(), y_hat.cpu())
+            for metric_name, metric_value in metrics_dict.items():
+                if metric_name not in test_metrics:
+                    test_metrics[metric_name] = []
+                test_metrics[metric_name].append(metric_value)
+                
+    final_test_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in test_metrics.items()}
+    print(f"  Final Test Metrics: {', '.join([f'{k}: {v:.4f}' for k, v in final_test_metrics.items()])}")
+
 
     hist= {
         "train_loss": train_losses,
         "val_loss": val_losses,
         "train_metrics": train_metrics,
-        "val_metrics": val_metrics
+        "val_metrics": val_metrics,
+        "test_metrics": final_test_metrics
     }
 
     plot_results(hist, model.name)
@@ -495,98 +542,71 @@ reg_embedding = torch.nn.Embedding(num_embeddings=esol_max_vals[0] + 1, embeddin
 in_features = embedding_dim + sum([size + 1 for size in esol_max_vals[1:]])
 #print(f"in features: {in_features}")
 
-while True:
-  pass
+from collections import defaultdict
 
+def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_size, n_epochs, repeat_factor=3):
+    print(f"\n{'='*50}")
+    print(f"Running Experiment: {model_kwargs['name']} ({repeat_factor} replicates)")
+    print(f"{'='*50}")
+    
+    all_test_metrics = defaultdict(list)
+    
+    for i in range(repeat_factor):
+        print(f"\n--- Replicate {i+1}/{repeat_factor} ---")
+        # Re-initialize model to get random weights for each replicate
+        model = model_class(**model_kwargs).to(device)
+        hist = train(model, train_ds, batch_size, val_ds, test_ds, n_epochs)
+        
+        for k, v in hist['test_metrics'].items():
+            all_test_metrics[k].append(v)
+            
+    print(f"\n>>> FINAL AGGREGATED RESULTS FOR {model_kwargs['name']} <<<")
+    for k, v_list in all_test_metrics.items():
+        mean_val = np.mean(v_list)
+        std_val = np.std(v_list)
+        print(f"  Test {k.upper()}: {mean_val:.4f} ± {std_val:.4f}")
 
-for i in range(repeat_factor):
-  deepset_regression = MolecularGraphRegression(
-    reg_embedding,
-    DeepSet(in_features, hidden_features),
-    reg_onehot_sizes,
-    name="DeepSet Regression"
-)
-  # REGRESSION TASK: TRAINING
-  deepset_reg=train(deepset_regression,esol_train_dataset,reg_batch_size,esol_val_dataset,reg_n_epochs)
+# --- REGRESSION EXPERIMENTS (ESOL) ---
+run_experiment(MolecularGraphRegression, 
+               {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": DeepSet(in_features, hidden_features), 
+                "onehot_sizes": reg_onehot_sizes, 
+                "name": "DeepSet Regression"},
+               esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
-# Embedding
-# TODO: implement an embedding for your models
-bbbp_max_vals = get_max_values(bbbp)
-class_batch_size = 200
-class_n_epochs = 60
-class_heads=4
-class_onehot_sizes=bbbp_max_vals[1:]
+run_experiment(MolecularGraphRegression, 
+               {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": GCN(in_features, hidden_features), 
+                "onehot_sizes": reg_onehot_sizes, 
+                "name": "GCN Regression"},
+               esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
-# Add 1 to num_embeddings as values are 0-indexed
-class_embedding = torch.nn.Embedding(num_embeddings=bbbp_max_vals[0] + 1, embedding_dim=embedding_dim)
+run_experiment(MolecularGraphRegression, 
+               {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": GAT(in_features, hidden_features, heads=4), 
+                "onehot_sizes": reg_onehot_sizes, 
+                "name": "GAT Regression"},
+               esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
-# Calculate in_features specifically for the classification task using BBBP max vals
-# Add 1 to each size in bbbp_max_vals[1:] for one-hot encoding
-in_features_classification = embedding_dim + sum([size + 1 for size in bbbp_max_vals[1:]])
-print(f"in features classification: {in_features_classification}")
+# --- CLASSIFICATION EXPERIMENTS (BBBP) ---
+run_experiment(MolecularGraphClassification, 
+               {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": DeepSet(in_features_classification, hidden_features), 
+                "onehot_sizes": class_onehot_sizes, 
+                "name": "DeepSet Classification"},
+               bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
-for i in range(repeat_factor):
-    # Regression models
-  deepset_classification = MolecularGraphClassification(
-      class_embedding,
-      DeepSet(in_features_classification, hidden_features),
-      class_onehot_sizes,
-      name="DeepSet Classification"
-  )
-  # REGRESSION TASK: TRAINING
-  deepset_class=train(deepset_classification,bbbp_train_dataset,class_batch_size,bbbp_val_dataset,class_n_epochs)
+run_experiment(MolecularGraphClassification, 
+               {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": GCN(in_features_classification, hidden_features), 
+                "onehot_sizes": class_onehot_sizes, 
+                "name": "GCN Classification"},
+               bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
-for i in range(repeat_factor):
- gcn_regression = MolecularGraphRegression(
-     reg_embedding,
-     GCN(in_features, hidden_features),
-     reg_onehot_sizes,
-     name="GCN Regression"
- )
- gcn_reg=train(gcn_regression,esol_train_dataset,reg_batch_size,esol_val_dataset,reg_n_epochs)
-
-
-
-for i in range(repeat_factor):
-  # CLASSIFICATION TASK: TRAINING
-  gcn_classification = MolecularGraphClassification(
-      class_embedding,
-      GCN(in_features_classification, hidden_features),
-      class_onehot_sizes,
-      name="GCN Classification"
-  )
-
-
-
-
-
-reg_heads=4
-gat_regression = MolecularGraphRegression(
-    reg_embedding,
-    GAT(in_features, hidden_features,heads=reg_heads),
-    reg_onehot_sizes,
-    name="GAT Regression"
-)
-
-gat_reg=train(gat_regression,esol_train_dataset,reg_batch_size,esol_val_dataset,reg_n_epochs)
-
-
-
-
-
-# CLASSIFICATION TASK: TRAINING
-gat_classification = MolecularGraphClassification(
-    class_embedding,
-    GAT(in_features_classification, hidden_features),
-    class_onehot_sizes,
-    name="GAT Classification"
-
-)
-# Train classification models on BBBP dataset
-gcn_class=train(gcn_classification,bbbp_train_dataset,class_batch_size,bbbp_val_dataset,class_n_epochs)
-gcn_class=train(gcn_classification,bbbp_train_dataset,class_batch_size,bbbp_val_dataset,class_n_epochs)
-
-
-while True:
-  pass
+run_experiment(MolecularGraphClassification, 
+               {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
+                "net": GAT(in_features_classification, hidden_features, heads=4), 
+                "onehot_sizes": class_onehot_sizes, 
+                "name": "GAT Classification"},
+               bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
