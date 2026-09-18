@@ -5,16 +5,18 @@ try:
 except ImportError:
     IN_COLAB = False
 
-if IN_COLAB:
-#     !git clone https://github.com/olsson-group/sml_project3.git
-#     !pip install -r sml_project3/requirements.txt
+import os
+import sys
+import subprocess
 
-    # Installing torch_scatter and torch_cluster is cumbersome because they are
-    # highly optimized implementations that depends on architecure and cuda version.
-    # Building these wheels can take up to 20-30 minutes.
+def run_cmd(cmd):
+    subprocess.check_call(cmd, shell=True)
 
-#     !pip install torch-scatter -f https://data.pyg.org/whl/torch-$(python3 -c "import torch; print(torch.__version__)")+cu$(python3 -c "import torch; print(torch.version.cuda.split('.')[0]+torch.version.cuda.split('.')[1])")/torch_scatter.html
-#     !pip install torch-cluster -f https://data.pyg.org/whl/torch-$(python3 -c "import torch; print(torch.__version__)")+cu$(python3 -c "import torch; print(torch.version.cuda.split('.')[0]+torch.version.cuda.split('.')[1])")/torch_cluster.html
+if not os.path.exists("sml_project3"):
+    print("Cloning sml_project3 utilities...")
+    run_cmd("git clone https://github.com/olsson-group/sml_project3.git")
+    print("Installing requirements...")
+    run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
 
 # import python packages
 import os

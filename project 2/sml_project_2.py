@@ -1,17 +1,16 @@
-# !git clone https://github.com/olsson-group/sml_project2.git
-# !pip install -r sml_project2/requirements.txt
+import os
+import sys
+import subprocess
 
-# Installing torch_scatter and torch_cluster is cumbersome because they are
-# highly optimized implementations that depends on architecure and cuda version.
-# Building these wheels can take up to 20-30 minutes.
+def run_cmd(cmd):
+    subprocess.check_call(cmd, shell=True)
 
-# !pip install torch-scatter -f https://data.pyg.org/whl/torch-$(python3 -c "import torch; print(torch.__version__)")+cu$(python3 -c "import torch; print(torch.version.cuda.split('.')[0]+torch.version.cuda.split('.')[1])")/torch_scatter.html
-# !pip install torch-cluster -f https://data.pyg.org/whl/torch-$(python3 -c "import torch; print(torch.__version__)")+cu$(python3 -c "import torch; print(torch.version.cuda.split('.')[0]+torch.version.cuda.split('.')[1])")/torch_cluster.html
-#!pip install wandb
-
-#!wandb login
-#import wandb
-#wandb.init(project="sml_project_2")
+if not os.path.exists("sml_project2"):
+    print("Cloning sml_project2 utilities...")
+    run_cmd("git clone https://github.com/olsson-group/sml_project2.git")
+    print("Installing requirements...")
+    run_cmd(f"{sys.executable} -m pip install -r sml_project2/requirements.txt")
+    run_cmd(f"{sys.executable} -m pip install e3nn nglview")
 
 import random
 
