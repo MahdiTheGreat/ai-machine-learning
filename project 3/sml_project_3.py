@@ -18,6 +18,17 @@ if not os.path.exists("sml_project3"):
     print("Installing requirements...")
     run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
 
+try:
+    import torch_scatter
+except ImportError:
+    print("Installing torch-scatter & torch-cluster (pre-built wheels)...")
+    import torch
+    torch_version = torch.__version__.split('+')[0]
+    cuda_version = "cu" + torch.version.cuda.replace(".", "") if torch.version.cuda else "cpu"
+    url = f"https://data.pyg.org/whl/torch-{torch_version}+{cuda_version}.html"
+    run_cmd(f"{sys.executable} -m pip install torch-scatter -f {url}")
+    run_cmd(f"{sys.executable} -m pip install torch-cluster -f {url}")
+
 # import python packages
 import os
 import numpy as np
