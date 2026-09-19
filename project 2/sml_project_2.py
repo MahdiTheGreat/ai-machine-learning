@@ -303,11 +303,17 @@ ground_state_energy = data.get_ground_state_energy(dataset)
 transform = Transform(ground_state_energy)
 dataset.transform = transform
 
-n_train = 900
-n_val = 50
+import sys
+DEBUG_MODE = '--test' in sys.argv
+
+n_train = 10 if DEBUG_MODE else 900
+n_val = 10 if DEBUG_MODE else 50
 seed = 42
 train_batch_size = 32
 val_batch_size = 50
+
+if DEBUG_MODE:
+    print("\n[WARNING] FAST DEBUG MODE")
 
 train_dataset, val_dataset = data.split_dataset(
   dataset, n_train=n_train, n_val=n_val, seed=seed
@@ -315,7 +321,7 @@ train_dataset, val_dataset = data.split_dataset(
 train_dataloader = geom.loader.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 val_dataloader = geom.loader.DataLoader(val_dataset, batch_size=val_batch_size)
 
-n_epochs = 10
+n_epochs = 1 if DEBUG_MODE else 10
 
 def train_eval_model(model, name):
     print(f"\n--- Training {name} ---")
