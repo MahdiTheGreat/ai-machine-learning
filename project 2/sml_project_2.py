@@ -8,8 +8,14 @@ def run_cmd(cmd):
 if not os.path.exists("sml_project2"):
     print("Cloning sml_project2 utilities...")
     run_cmd("git clone https://github.com/olsson-group/sml_project2.git")
-    print("Installing requirements...")
+    print("Installing sml_project2 requirements...")
     run_cmd(f"{sys.executable} -m pip install -r sml_project2/requirements.txt")
+
+try:
+    import e3nn
+    import nglview
+except ImportError:
+    print("Installing e3nn and nglview...")
     run_cmd(f"{sys.executable} -m pip install e3nn nglview")
 
 try:
