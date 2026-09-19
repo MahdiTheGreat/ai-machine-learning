@@ -134,8 +134,6 @@ class MLFF(torch.nn.Module):
     return torch.nn.MSELoss()(y, y_hat)
 
 
-while True:
-  pass
 
 # MODEL: Setup the Baseline class
 
