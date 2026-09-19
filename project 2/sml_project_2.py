@@ -42,6 +42,7 @@ if installed_anything:
     print("="*60 + "\n")
     sys.exit(1)
 
+import random
 import e3nn
 from e3nn import o3
 from e3nn import math
