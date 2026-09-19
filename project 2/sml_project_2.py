@@ -45,6 +45,9 @@ if installed_anything:
 import random
 
 import e3nn
+from e3nn import o3
+from e3nn import math
+from e3nn.nn.models.v2103 import gate_points_message_passing
 import nglview
 from scipy.spatial.transform import Rotation
 import torch
