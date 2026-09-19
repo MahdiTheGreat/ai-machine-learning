@@ -22,17 +22,7 @@ except ImportError:
     run_cmd(f"{sys.executable} -m pip install e3nn nglview")
     installed_anything = True
 
-try:
-    import torch_scatter
-except ImportError:
-    print("Installing torch-scatter & torch-cluster (pre-built wheels)...")
-    import torch
-    torch_version = torch.__version__.split('+')[0]
-    cuda_version = "cu" + torch.version.cuda.replace(".", "") if torch.version.cuda else "cpu"
-    url = f"https://data.pyg.org/whl/torch-{torch_version}+{cuda_version}.html"
-    run_cmd(f"{sys.executable} -m pip install torch-scatter -f {url}")
-    run_cmd(f"{sys.executable} -m pip install torch-cluster -f {url}")
-    installed_anything = True
+pass
 
 if installed_anything:
     print("\n" + "="*60)
@@ -51,7 +41,7 @@ import nglview
 from scipy.spatial.transform import Rotation
 import torch
 import torch_geometric as geom
-from torch_scatter import scatter
+from torch_geometric.utils import scatter
 
 from sml_project2 import data
 from sml_project2 import utils
@@ -390,8 +380,8 @@ train_eval_model(e3mpnn_model, "E3MPNN (lmax=1)")
 # colab doesn't allow for third party widgets
 
 batch = dataset[0]
-pos = batch.pos.detach().numpy()
-z = batch.z.detach().numpy()
+pos = batch.pos
+z = batch.z
 
 # HINT: You can also render a trajectory if you decide to experiment with
 # integrating langevin dynamics by applying something like
@@ -402,4 +392,5 @@ view = nglview.show_mdtraj(traj)
 view.clear_representations()
 view.add_representation('hyperball')
 view
+
 
