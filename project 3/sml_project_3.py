@@ -12,11 +12,14 @@ import subprocess
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
 
+installed_anything = False
+
 if not os.path.exists("sml_project3"):
     print("Cloning sml_project3 utilities...")
     run_cmd("git clone https://github.com/olsson-group/sml_project3.git")
     print("Installing requirements...")
     run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
+    installed_anything = True
 
 try:
     import torch_scatter
@@ -28,6 +31,15 @@ except ImportError:
     url = f"https://data.pyg.org/whl/torch-{torch_version}+{cuda_version}.html"
     run_cmd(f"{sys.executable} -m pip install torch-scatter -f {url}")
     run_cmd(f"{sys.executable} -m pip install torch-cluster -f {url}")
+    installed_anything = True
+
+if installed_anything:
+    print("\n" + "="*60)
+    print("CRITICAL: New packages were installed!")
+    print("You MUST restart the Colab Runtime (Runtime -> Restart session) before running this script again.")
+    print("This prevents PyTorch circular import errors.")
+    print("="*60 + "\n")
+    sys.exit(1)
 
 # import python packages
 import os

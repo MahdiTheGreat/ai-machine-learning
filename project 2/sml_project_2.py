@@ -5,11 +5,14 @@ import subprocess
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
 
+installed_anything = False
+
 if not os.path.exists("sml_project2"):
     print("Cloning sml_project2 utilities...")
     run_cmd("git clone https://github.com/olsson-group/sml_project2.git")
     print("Installing sml_project2 requirements...")
     run_cmd(f"{sys.executable} -m pip install -r sml_project2/requirements.txt")
+    installed_anything = True
 
 try:
     import e3nn
@@ -17,6 +20,7 @@ try:
 except ImportError:
     print("Installing e3nn and nglview...")
     run_cmd(f"{sys.executable} -m pip install e3nn nglview")
+    installed_anything = True
 
 try:
     import torch_scatter
@@ -28,6 +32,15 @@ except ImportError:
     url = f"https://data.pyg.org/whl/torch-{torch_version}+{cuda_version}.html"
     run_cmd(f"{sys.executable} -m pip install torch-scatter -f {url}")
     run_cmd(f"{sys.executable} -m pip install torch-cluster -f {url}")
+    installed_anything = True
+
+if installed_anything:
+    print("\n" + "="*60)
+    print("CRITICAL: New packages were installed!")
+    print("You MUST restart the Colab Runtime (Runtime -> Restart session) before running this script again.")
+    print("This prevents PyTorch circular import errors.")
+    print("="*60 + "\n")
+    sys.exit(1)
 
 import random
 
