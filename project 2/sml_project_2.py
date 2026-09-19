@@ -335,8 +335,9 @@ val_batch_size = 50
 if DEBUG_MODE:
     print("\n[WARNING] FAST DEBUG MODE")
 
-train_dataset, val_dataset = data.split_dataset(
-  dataset, n_train=n_train, n_val=n_val, seed=seed
+n_test = len(dataset) - n_train - n_val
+train_dataset, val_dataset, test_dataset = data.split_dataset(
+  dataset, n_train=n_train, n_val=n_val, n_test=n_test, seed=seed
 )
 train_dataloader = geom.loader.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 val_dataloader = geom.loader.DataLoader(val_dataset, batch_size=val_batch_size)
