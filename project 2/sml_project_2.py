@@ -96,22 +96,11 @@ class MLFF(torch.nn.Module):
     self.optimizer.step()
     self.optimizer.zero_grad()
 
-    if self.lr_scheduler is not None:
-      # HINT: If using lr scheduler you can consider monitoring the learning
-      # rate
-      self.lr_scheduler.step()
-
   def setup_optimizer(self):
     self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
     self.lr_scheduler = ReduceLROnPlateau(self.optimizer, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08)
-    # Adam has an adaptive mechanism (per-parameter scaling).
-    # Schedulers control the global LR schedule over time.
-    # Both affect learning rates, but at different levels (global vs. per-parameter adaptation).
-    # Check https://pytorch.org/docs/stable/optim.html#module-torch.optim.lr_scheduler
-    # for available learning rate schedulers
 
   def forward(self, batch, return_force=False):
-    # HINT: requiring grad on positions is necessary for computing forces.
     if return_force:
       batch.pos.requires_grad = True
 
@@ -134,8 +123,7 @@ class MLFF(torch.nn.Module):
     return force
 
   def loss_fn(self, y, y_hat):
-    # TODO: Implement an appropriate loss.
-    return torch.nn.MSELoss()(y, y_hat)
+    return torch.nn.MSELoss()(y.view(-1), y_hat.view(-1))
 
 
 
@@ -366,7 +354,13 @@ def train_eval_model(model, name):
             loss = model.loss_fn(batch.energy, energy)
             val_loss += loss.item()
             
-        print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {train_loss/len(train_dataloader):.4f} | Val Loss: {val_loss/len(val_dataloader):.4f}")
+        avg_train_loss = train_loss/len(train_dataloader)
+        avg_val_loss = val_loss/len(val_dataloader)
+        
+        if model.lr_scheduler is not None:
+            model.lr_scheduler.step(avg_val_loss)
+            
+        print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
     # Evaluate forces on validation set
     print(f"\nEvaluating Forces for {name}:")
