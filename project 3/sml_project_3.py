@@ -61,12 +61,12 @@ import matplotlib.pyplot as plt
 os.chdir("sml_project3")
 
 # import project files
-from sml_project3 import data
-from sml_project3 import mlops
-from sml_project3 import util
-from sml_project3 import model
-from sml_project3 import painn
-from sml_project3 import torsion
+from sml_project3.sml_project3 import data
+from sml_project3.sml_project3 import mlops
+from sml_project3.sml_project3 import util
+from sml_project3.sml_project3 import model
+from sml_project3.sml_project3 import painn
+from sml_project3.sml_project3 import torsion
 
 from oracle import util as outil
 
