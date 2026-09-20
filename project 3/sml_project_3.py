@@ -21,6 +21,14 @@ if not os.path.exists("sml_project3"):
     run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
     installed_anything = True
 
+# FIX: The cloned repo's inner package is missing an __init__.py, which causes 
+# Python to shadow it with the repo's outer __init__.py, breaking all imports.
+# We dynamically create an empty __init__.py here to force it into a regular package.
+init_path = os.path.join("sml_project3", "sml_project3", "__init__.py")
+if os.path.exists("sml_project3") and not os.path.exists(init_path):
+    with open(init_path, "w") as f:
+        pass
+
 try:
     import torch_geometric
     import mdtraj
@@ -67,13 +75,18 @@ import matplotlib.pyplot as plt
 # so they can find relative paths like data/ and oracle/.weights/
 os.chdir("sml_project3")
 
+# We must also add this new directory to the front of sys.path so Python resolves
+# the inner sml_project3 folder as a top-level module without needing __init__.py
+if os.getcwd() not in sys.path:
+    sys.path.insert(0, os.getcwd())
+
 # import project files
-from sml_project3.sml_project3 import data
-from sml_project3.sml_project3 import mlops
-from sml_project3.sml_project3 import util
-from sml_project3.sml_project3 import model
-from sml_project3.sml_project3 import painn
-from sml_project3.sml_project3 import torsion
+from sml_project3 import data
+from sml_project3 import mlops
+from sml_project3 import util
+from sml_project3 import model
+from sml_project3 import painn
+from sml_project3 import torsion
 
 from oracle import util as outil
 
