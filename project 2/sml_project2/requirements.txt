@@ -1,7 +1,0 @@
-torch
-torch_geometric
-numpy
-e3nn
-mdtraj
-matplotlib
-nglview
