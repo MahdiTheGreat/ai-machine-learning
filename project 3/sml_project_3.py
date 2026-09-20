@@ -9,6 +9,12 @@ import os
 import sys
 import subprocess
 
+# FIX: In Colab/Jupyter, os.chdir() persists across cell executions.
+# If we re-run this script, we don't want to descend deeper into the folders.
+# We explicitly reset the working directory to the folder containing this script.
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
+
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
 
@@ -24,10 +30,13 @@ if not os.path.exists("sml_project3"):
 # FIX: The cloned repo's inner package is missing an __init__.py, which causes 
 # Python to shadow it with the repo's outer __init__.py, breaking all imports.
 # We dynamically create an empty __init__.py here to force it into a regular package.
-init_path = os.path.join("sml_project3", "sml_project3", "__init__.py")
-if os.path.exists("sml_project3") and not os.path.exists(init_path):
-    with open(init_path, "w") as f:
-        pass
+inner_dir = os.path.join("sml_project3", "sml_project3")
+if os.path.exists("sml_project3"):
+    os.makedirs(inner_dir, exist_ok=True)
+    init_path = os.path.join(inner_dir, "__init__.py")
+    if not os.path.exists(init_path):
+        with open(init_path, "w") as f:
+            pass
 
 try:
     import torch_geometric
