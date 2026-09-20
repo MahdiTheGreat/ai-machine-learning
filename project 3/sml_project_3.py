@@ -35,16 +35,24 @@ if not os.path.exists("sml_project3"):
     run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
     installed_anything = True
 
-# FIX: The cloned repo's inner package is missing an __init__.py, which causes 
-# Python to shadow it with the repo's outer __init__.py, breaking all imports.
-# We dynamically create an empty __init__.py here to force it into a regular package.
+import shutil
+
+# FIX: The cloned repo has an "inception" style nested package (sml_project3/sml_project3)
+# which hopelessly confuses Jupyter and Python's import cache. 
+# We physically move all python files from the inner folder to the outer folder,
+# and delete the inner folder, flattening the repository so it matches Project 2 exactly!
 inner_dir = os.path.join("sml_project3", "sml_project3")
-if os.path.exists("sml_project3"):
-    os.makedirs(inner_dir, exist_ok=True)
-    init_path = os.path.join(inner_dir, "__init__.py")
-    if not os.path.exists(init_path):
-        with open(init_path, "w") as f:
-            pass
+if os.path.exists(inner_dir):
+    for f in os.listdir(inner_dir):
+        src = os.path.join(inner_dir, f)
+        dst = os.path.join("sml_project3", f)
+        if os.path.exists(dst):
+            if os.path.isdir(dst):
+                shutil.rmtree(dst)
+            else:
+                os.remove(dst)
+        shutil.move(src, dst)
+    shutil.rmtree(inner_dir)
 
 try:
     import torch_geometric
@@ -92,12 +100,6 @@ import matplotlib.pyplot as plt
 # so they can find relative paths like data/ and oracle/.weights/
 repo_dir = os.path.join(script_dir, "sml_project3")
 os.chdir(repo_dir)
-
-# To bypass the confusing inception-style nested package structure, we add the repo
-# root to sys.path. This tricks Python into treating the inner sml_project3 folder 
-# as the top-level package, making the imports identical to Project 2.
-if repo_dir not in sys.path:
-    sys.path.insert(0, repo_dir)
 
 # import project files
 from sml_project3 import data
