@@ -95,6 +95,7 @@ import numpy as np
 import torch
 import torch_geometric as geom
 import matplotlib.pyplot as plt
+from scipy.stats import entropy
 
 # The sml_project3 utilities expect the current working directory to be the repo root
 # so they can find relative paths like data/ and oracle/.weights/
@@ -186,8 +187,9 @@ class EquivariantReadout(torch.nn.Module):
         return v_t
 
 import sys
-DEBUG_MODE = '--test' in sys.argv
-n_epochs = 1 if DEBUG_MODE else 1000
+# The user wants to run the full training loop now. We disable test mode.
+DEBUG_MODE = False
+n_epochs = 100
 if DEBUG_MODE:
     print("\n[WARNING] FAST DEBUG MODE")
 
@@ -278,7 +280,9 @@ def generate_and_evaluate(cfm, name):
     for batch in samples_dataloader:
         batch = batch.to(device)
         oracle_energies = oracle.get_energy(batch)
-        oracles.append(oracle_energies.detach().cpu().numpy())
+        if hasattr(oracle_energies, "detach"):
+            oracle_energies = oracle_energies.detach().cpu().numpy()
+        oracles.append(oracle_energies)
     oracle_energies = np.concatenate(oracles, axis=0)
     
     # Reference energies
@@ -286,7 +290,9 @@ def generate_and_evaluate(cfm, name):
     for batch in ref_loader:
         batch = batch.to(device)
         ref_energy = oracle.get_energy(batch)
-        refs.append(ref_energy.detach().cpu().numpy())
+        if hasattr(ref_energy, "detach"):
+            ref_energy = ref_energy.detach().cpu().numpy()
+        refs.append(ref_energy)
     ref_energies = np.concatenate(refs, axis=0)
     
     # KL Divergence Metric
@@ -304,6 +310,29 @@ def generate_and_evaluate(cfm, name):
     
     print(f"KL Divergence (Torsion): {kl_torsion:.4f}")
     print(f"KL Divergence (Energy):  {kl_energy:.4f}")
+
+    # Visualization
+    os.makedirs(f"results/{name}", exist_ok=True)
+    
+    plt.figure(figsize=(8, 6))
+    plt.hist(ref_torsions, bins=50, density=True, alpha=0.5, label='Reference')
+    plt.hist(sampled_torsions, bins=50, density=True, alpha=0.5, label='Generated')
+    plt.title(f'{name} CFM: Torsion Distribution (KL: {kl_torsion:.4f})')
+    plt.xlabel('Torsion Angle')
+    plt.ylabel('Density')
+    plt.legend()
+    plt.savefig(f'results/{name}/torsion_dist.png')
+    plt.close()
+    
+    plt.figure(figsize=(8, 6))
+    plt.hist(ref_energies, bins=50, density=True, alpha=0.5, label='Reference')
+    plt.hist(oracle_energies, bins=50, density=True, alpha=0.5, label='Generated')
+    plt.title(f'{name} CFM: Energy Distribution (KL: {kl_energy:.4f})')
+    plt.xlabel('Energy')
+    plt.ylabel('Density')
+    plt.legend()
+    plt.savefig(f'results/{name}/energy_dist.png')
+    plt.close()
 
 generate_and_evaluate(baseline_cfm, "Baseline")
 generate_and_evaluate(painn_cfm, "PaiNN")
