@@ -90,15 +90,22 @@ import matplotlib.pyplot as plt
 
 # The sml_project3 utilities expect the current working directory to be the repo root
 # so they can find relative paths like data/ and oracle/.weights/
-os.chdir("sml_project3")
+repo_dir = os.path.join(script_dir, "sml_project3")
+os.chdir(repo_dir)
+
+# To bypass the confusing inception-style nested package structure, we add the repo
+# root to sys.path. This tricks Python into treating the inner sml_project3 folder 
+# as the top-level package, making the imports identical to Project 2.
+if repo_dir not in sys.path:
+    sys.path.insert(0, repo_dir)
 
 # import project files
-from sml_project3.sml_project3 import data
-from sml_project3.sml_project3 import mlops
-from sml_project3.sml_project3 import util
-from sml_project3.sml_project3 import model
-from sml_project3.sml_project3 import painn
-from sml_project3.sml_project3 import torsion
+from sml_project3 import data
+from sml_project3 import mlops
+from sml_project3 import util
+from sml_project3 import model
+from sml_project3 import painn
+from sml_project3 import torsion
 
 from oracle import util as outil
 
