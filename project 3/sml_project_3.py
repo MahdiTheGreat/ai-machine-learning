@@ -187,9 +187,8 @@ class EquivariantReadout(torch.nn.Module):
         return v_t
 
 import sys
-# The user wants to run the full training loop now. We disable test mode.
-DEBUG_MODE = False
-n_epochs = 100
+DEBUG_MODE = '--test' in sys.argv
+n_epochs = 1 if DEBUG_MODE else 1000
 if DEBUG_MODE:
     print("\n[WARNING] FAST DEBUG MODE")
 
