@@ -9,6 +9,12 @@ import os
 import sys
 import subprocess
 
+# FIX: Clear Jupyter's import cache for our project. 
+# If a previous run failed to find the module, Python permanently caches the failure (negative cache).
+for key in list(sys.modules.keys()):
+    if key.startswith("sml_project3"):
+        del sys.modules[key]
+
 # FIX: In Colab/Jupyter, os.chdir() persists across cell executions.
 # If we re-run this script, we don't want to descend deeper into the folders.
 # We explicitly reset the working directory to the folder containing this script.
