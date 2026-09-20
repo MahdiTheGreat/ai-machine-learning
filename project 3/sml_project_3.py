@@ -150,8 +150,9 @@ class BaselineModel(torch.nn.Module):
 
     def forward(self, t, batch):
         # batch.pos is [n_atoms, 3]
-        # t is [n_atoms]
-        t_expanded = t.unsqueeze(1) if t.dim() == 1 else t
+        # t is [batch_size]
+        t_batch = t[batch.batch]
+        t_expanded = t_batch.unsqueeze(1) if t_batch.dim() == 1 else t_batch
         x = torch.cat([batch.pos, t_expanded], dim=1)
         velocity = self.net(x)
         return velocity
