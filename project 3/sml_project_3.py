@@ -22,6 +22,14 @@ if not os.path.exists("sml_project3"):
     installed_anything = True
 
 try:
+    import torch_geometric
+    import mdtraj
+except ImportError:
+    print("Installing torch_geometric and mdtraj...")
+    run_cmd(f"{sys.executable} -m pip install torch_geometric mdtraj e3nn")
+    installed_anything = True
+
+try:
     import torch_scatter
 except ImportError:
     print("Installing torch-scatter & torch-cluster (pre-built wheels)...")

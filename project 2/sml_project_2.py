@@ -17,9 +17,10 @@ if not os.path.exists("sml_project2"):
 try:
     import e3nn
     import nglview
+    import torch_geometric
 except ImportError:
-    print("Installing e3nn and nglview...")
-    run_cmd(f"{sys.executable} -m pip install e3nn nglview")
+    print("Installing e3nn, nglview, and torch_geometric...")
+    run_cmd(f"{sys.executable} -m pip install e3nn nglview torch_geometric mdtraj")
     installed_anything = True
 
 try:
