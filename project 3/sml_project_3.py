@@ -84,18 +84,13 @@ import matplotlib.pyplot as plt
 # so they can find relative paths like data/ and oracle/.weights/
 os.chdir("sml_project3")
 
-# We must also add this new directory to the front of sys.path so Python resolves
-# the inner sml_project3 folder as a top-level module without needing __init__.py
-if os.getcwd() not in sys.path:
-    sys.path.insert(0, os.getcwd())
-
 # import project files
-from sml_project3 import data
-from sml_project3 import mlops
-from sml_project3 import util
-from sml_project3 import model
-from sml_project3 import painn
-from sml_project3 import torsion
+from sml_project3.sml_project3 import data
+from sml_project3.sml_project3 import mlops
+from sml_project3.sml_project3 import util
+from sml_project3.sml_project3 import model
+from sml_project3.sml_project3 import painn
+from sml_project3.sml_project3 import torsion
 
 from oracle import util as outil
 
