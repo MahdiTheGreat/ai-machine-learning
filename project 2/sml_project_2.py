@@ -380,8 +380,8 @@ train_eval_model(e3mpnn_model, "E3MPNN (lmax=1)")
 # colab doesn't allow for third party widgets
 
 batch = dataset[0]
-pos = batch.pos
-z = batch.z
+pos = torch.as_tensor(batch.pos)
+z = torch.as_tensor(batch.z)
 
 # HINT: You can also render a trajectory if you decide to experiment with
 # integrating langevin dynamics by applying something like

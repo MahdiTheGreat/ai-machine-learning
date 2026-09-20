@@ -1,2 +1,17 @@
 scratch/
 lectures/
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.DS_Store
+
+# Datasets and Checkpoints
+data/
+results/
+*.pkl
+*.pt
+
+# Dynamically cloned utilities (to prevent git tracking them as submodules or dirty files)
+project 2/sml_project2/
+project 3/sml_project3/
