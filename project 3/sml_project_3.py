@@ -56,26 +56,17 @@ import torch
 import torch_geometric as geom
 import matplotlib.pyplot as plt
 
-# settings
-if IN_COLAB:
-    os.chdir(f"/content/sml_project3")
+# The sml_project3 utilities expect the current working directory to be the repo root
+# so they can find relative paths like data/ and oracle/.weights/
+os.chdir("sml_project3")
 
-    # import project files
-    from sml_project3.sml_project3 import data
-    from sml_project3.sml_project3 import mlops
-    from sml_project3.sml_project3 import util
-    from sml_project3.sml_project3 import model
-    from sml_project3.sml_project3 import painn
-    from sml_project3.sml_project3 import torsion
-
-else:
-    # import project files
-    from sml_project3 import data
-    from sml_project3 import mlops
-    from sml_project3 import util
-    from sml_project3 import model
-    from sml_project3 import painn
-    from sml_project3 import torsion
+# import project files
+from sml_project3 import data
+from sml_project3 import mlops
+from sml_project3 import util
+from sml_project3 import model
+from sml_project3 import painn
+from sml_project3 import torsion
 
 from oracle import util as outil
 
