@@ -8,6 +8,9 @@ except ImportError:
 import os
 import sys
 import subprocess
+import time
+
+overall_start_time = time.time()
 
 # FIX: Clear Jupyter's import cache for our project. 
 # If a previous run failed to find the module, Python permanently caches the failure (negative cache).
@@ -202,8 +205,10 @@ painn_score = painn.Painn(n_features=8, readout=readout).to(device)
 painn_cfm = model.CFM(painn_score, basedistribution).to(device)
 
 dataset = data.Pentene1Dataset()
+print(f"Loaded Pentene1Dataset: {len(dataset)} molecules")
 if DEBUG_MODE:
     dataset = torch.utils.data.Subset(dataset, range(10))
+    print(f"DEBUG MODE: subset dataset to {len(dataset)} molecules")
 dataloader = geom.loader.DataLoader(dataset, batch_size=128, shuffle=True)
 
 def train_cfm(cfm_model, name):
@@ -218,6 +223,12 @@ def train_cfm(cfm_model, name):
             # t is a random time between 0 and 1 for each graph in the batch
             t = torch.rand(len(batch)).type_as(batch.pos).to(device)
             loss = cfm_model.get_loss(t, batch)
+            
+            if epoch == 0 and i == 0:
+                print(f"\nArchitecture for {name} after first forward pass:")
+                print(cfm_model)
+                print("\n")
+                
             cfm_model.training_step(loss)
             epoch_loss += loss.item()
             step += 1
@@ -244,6 +255,7 @@ def generate_and_evaluate(cfm, name):
     cfm.eval()
     n_samples = 10 if DEBUG_MODE else 100
     base_dataset = data.BaseDistributionDataset(n_samples, basedistribution)
+    print(f"Loaded BaseDistributionDataset: {len(base_dataset)} molecules")
     base_loader = geom.loader.DataLoader(base_dataset, batch_size=512, shuffle=False)
     
     print(f"Sampling {n_samples} molecules...")
@@ -335,3 +347,6 @@ def generate_and_evaluate(cfm, name):
 
 generate_and_evaluate(baseline_cfm, "Baseline")
 generate_and_evaluate(painn_cfm, "PaiNN")
+
+overall_end_time = time.time()
+print(f"\nAll Project 3 experiments completed in {overall_end_time - overall_start_time:.2f} seconds.")

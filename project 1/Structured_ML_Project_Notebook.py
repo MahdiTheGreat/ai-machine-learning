@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 import random
 import numpy as np
 import wandb
+import time
+
+overall_start_time = time.time()
 
 
 # Device configuration
@@ -379,7 +382,6 @@ def plot_results(results, model_name):
 
 def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs, val_factor=2, use_wandb=False):
     print(f"Training {model.name} with {batch_size} batch size for {n_epochs} epochs...")
-    print(model)
 
     if use_wandb:
      # Generate a dynamic project name
@@ -406,11 +408,16 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
         epoch_train_loss = 0
         epoch_train_metrics = {}
 
-        for batch in train_dataloader:
+        for i, batch in enumerate(train_dataloader):
             batch = batch.to(device)
 
             # Forward pass
             y_hat = model(batch)
+            
+            if epoch == 0 and i == 0:
+                print(f"\nArchitecture of {model.name} after first forward pass:")
+                print(model)
+                print("\n")
 
             # Calculate loss
             loss = model.loss(batch.y, y_hat)
@@ -561,6 +568,7 @@ def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_s
     print(f"{'='*50}")
     
     all_test_metrics = defaultdict(list)
+    start_time = time.time()
     
     for i in range(repeat_factor):
         print(f"\n--- Replicate {i+1}/{repeat_factor} ---")
@@ -571,7 +579,9 @@ def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_s
         for k, v in hist['test_metrics'].items():
             all_test_metrics[k].append(v)
             
+    end_time = time.time()
     print(f"\n>>> FINAL AGGREGATED RESULTS FOR {model_kwargs['name']} <<<")
+    print(f"Total time taken: {end_time - start_time:.2f} seconds")
     for k, v_list in all_test_metrics.items():
         mean_val = np.mean(v_list)
         std_val = np.std(v_list)
@@ -633,4 +643,7 @@ run_experiment(MolecularGraphClassification,
                 "onehot_sizes": class_onehot_sizes, 
                 "name": "GAT Classification"},
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
+
+overall_end_time = time.time()
+print(f"\nAll experiments completed in {overall_end_time - overall_start_time:.2f} seconds.")
 

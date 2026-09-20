@@ -314,7 +314,10 @@ class Transform():
 # TRAIN: Ethanol
 
 # Setup Ethanol data
+import time
+overall_start_time = time.time()
 dataset = data.get_dataset('ethanol')
+print(f"Loaded Ethanol Dataset: {len(dataset)} molecules")
 ground_state_energy = data.get_ground_state_energy(dataset)
 transform = Transform(ground_state_energy)
 dataset.transform = transform
@@ -335,6 +338,7 @@ n_test = len(dataset) - n_train - n_val
 train_dataset, val_dataset, test_dataset = data.split_dataset(
   dataset, n_train=n_train, n_val=n_val, n_test=n_test, seed=seed
 )
+print(f"  Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
 train_dataloader = geom.loader.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 val_dataloader = geom.loader.DataLoader(val_dataset, batch_size=val_batch_size)
 
@@ -342,13 +346,20 @@ n_epochs = 1 if DEBUG_MODE else 10
 
 def train_eval_model(model, name):
     print(f"\n--- Training {name} ---")
+    start_time = time.time()
     model = model.to(device)
     for epoch in range(n_epochs):
         model.train()
         train_loss = 0
-        for batch in train_dataloader:
+        for i, batch in enumerate(train_dataloader):
             batch = batch.to(device)
             energy = model(batch)
+            
+            if epoch == 0 and i == 0:
+                print(f"\nArchitecture for {name} after first forward pass:")
+                print(model)
+                print("\n")
+                
             loss = model.loss_fn(batch.energy, energy)
             model.training_step(loss)
             train_loss += loss.item()
@@ -368,6 +379,9 @@ def train_eval_model(model, name):
             model.lr_scheduler.step(avg_val_loss)
             
         print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+    end_time = time.time()
+    print(f"Training {name} completed in {end_time - start_time:.2f} seconds")
 
     # Evaluate forces on validation set
     print(f"\nEvaluating Forces for {name}:")
@@ -409,5 +423,8 @@ view = nglview.show_mdtraj(traj)
 view.clear_representations()
 view.add_representation('hyperball')
 view
+
+overall_end_time = time.time()
+print(f"\nAll Project 2 experiments completed in {overall_end_time - overall_start_time:.2f} seconds.")
 
 
