@@ -20,6 +20,8 @@ for key in list(sys.modules.keys()):
 # We explicitly reset the working directory to the folder containing this script.
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
