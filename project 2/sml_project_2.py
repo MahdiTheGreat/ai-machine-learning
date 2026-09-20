@@ -22,6 +22,13 @@ except ImportError:
     print("Installing e3nn, nglview, and torch_geometric...")
     run_cmd(f"{sys.executable} -m pip install e3nn nglview torch_geometric mdtraj")
     installed_anything = True
+except AttributeError as e:
+    print("\n" + "="*60)
+    print("CRITICAL: PyTorch Geometric circular import detected!")
+    print("You MUST restart the Colab Runtime (Runtime -> Restart session) right now.")
+    print(f"Error details: {e}")
+    print("="*60 + "\n")
+    sys.exit(1)
 
 try:
     import torch_scatter
