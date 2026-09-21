@@ -31,7 +31,6 @@ def filter_small_graphs(dataset):
     """Remove molecules with fewer than 2 nodes (atoms) and return a new dataset."""
     initial_len = len(dataset)
     filtered_data_list = [data_obj for data_obj in dataset if data_obj.x.size(0) >= 2]
-    print(f"Filtered {initial_len - len(filtered_data_list)} molecules with < 2 nodes")
 
     # Create a new dataset object with the filtered data
     # We need to replicate the structure of the original dataset,
@@ -296,7 +295,7 @@ class GCN(torch.nn.Module):
 
     def forward(self, x, edge_index, batch):
         # Apply GCN layers with ReLU
-        for i in range(self.num_layers - 1):
+        for i in range(len(self.layers) - 1):
             x = self.layers[i](x, edge_index)
             x = torch.relu(x)
 
@@ -516,7 +515,8 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
     plot_results(hist, model.name)
 
     # Finish the wandb run
-    wandb.finish()
+    if use_wandb:
+        wandb.finish()
 
     return hist
 
@@ -552,8 +552,7 @@ if DEBUG_MODE:
 # Setup
 hidden_features = 64
 embedding_dim=32
-# Add 1 to num_embeddings as values are 0-indexed
-reg_embedding = torch.nn.Embedding(num_embeddings=esol_max_vals[0] + 1, embedding_dim=embedding_dim)
+# (reg_embedding removed because embeddings are constructed per-experiment)
 
 # Total dimension: 32 (atomic) + sum of one-hot dimensions
 # Add 1 to each size in esol_max_vals[1:] for one-hot encoding
@@ -582,27 +581,33 @@ def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_s
     end_time = time.time()
     print(f"\n>>> FINAL AGGREGATED RESULTS FOR {model_kwargs['name']} <<<")
     print(f"Total time taken: {end_time - start_time:.2f} seconds")
+    
+    final_metrics_summary = {}
     for k, v_list in all_test_metrics.items():
         mean_val = np.mean(v_list)
         std_val = np.std(v_list)
         print(f"  Test {k.upper()}: {mean_val:.4f} ± {std_val:.4f}")
+        final_metrics_summary[k] = (mean_val, std_val)
+        
+    return final_metrics_summary
 
 # --- REGRESSION EXPERIMENTS (ESOL) ---
-run_experiment(MolecularGraphRegression, 
+reg_results = {}
+reg_results["DeepSet"] = run_experiment(MolecularGraphRegression, 
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": DeepSet(in_features, hidden_features), 
                 "onehot_sizes": reg_onehot_sizes, 
                 "name": "DeepSet Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
-run_experiment(MolecularGraphRegression, 
+reg_results["GCN"] = run_experiment(MolecularGraphRegression, 
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": GCN(in_features, hidden_features), 
                 "onehot_sizes": reg_onehot_sizes, 
                 "name": "GCN Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
-run_experiment(MolecularGraphRegression, 
+reg_results["GAT"] = run_experiment(MolecularGraphRegression, 
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": GAT(in_features, hidden_features, heads=4), 
                 "onehot_sizes": reg_onehot_sizes, 
@@ -623,26 +628,52 @@ if DEBUG_MODE:
     bbbp_test_dataset = torch.utils.data.Subset(bbbp_test_dataset, range(min(5, len(bbbp_test_dataset))))
 
 # --- CLASSIFICATION EXPERIMENTS (BBBP) ---
-run_experiment(MolecularGraphClassification, 
+cls_results = {}
+cls_results["DeepSet"] = run_experiment(MolecularGraphClassification, 
                {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": DeepSet(in_features_classification, hidden_features), 
                 "onehot_sizes": class_onehot_sizes, 
                 "name": "DeepSet Classification"},
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
-run_experiment(MolecularGraphClassification, 
+cls_results["GCN"] = run_experiment(MolecularGraphClassification, 
                {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": GCN(in_features_classification, hidden_features), 
                 "onehot_sizes": class_onehot_sizes, 
                 "name": "GCN Classification"},
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
-run_experiment(MolecularGraphClassification, 
+cls_results["GAT"] = run_experiment(MolecularGraphClassification, 
                {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
                 "net": GAT(in_features_classification, hidden_features, heads=4), 
                 "onehot_sizes": class_onehot_sizes, 
                 "name": "GAT Classification"},
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
+
+def plot_final_comparison(results_dict, task_name, metrics):
+    num_metrics = len(metrics)
+    fig, axes = plt.subplots(1, num_metrics, figsize=(6 * num_metrics, 5))
+    if num_metrics == 1:
+        axes = [axes]
+        
+    models = list(results_dict.keys())
+    
+    for i, metric in enumerate(metrics):
+        means = [results_dict[m][metric][0] for m in models]
+        stds = [results_dict[m][metric][1] for m in models]
+        
+        axes[i].bar(models, means, yerr=stds, capsize=5, alpha=0.7)
+        axes[i].set_title(f'{task_name} - {metric.upper()}')
+        axes[i].set_ylabel(metric.upper())
+        axes[i].grid(axis='y', linestyle='--', alpha=0.7)
+        
+    plt.tight_layout()
+    plt.savefig(f"{task_name.lower()}_comparison.png")
+    plt.show()
+
+print("\nGenerating comparison plots...")
+plot_final_comparison(reg_results, "Regression", ["rmse", "pcc"])
+plot_final_comparison(cls_results, "Classification", ["roc_auc"])
 
 overall_end_time = time.time()
 print(f"\nAll experiments completed in {overall_end_time - overall_start_time:.2f} seconds.")

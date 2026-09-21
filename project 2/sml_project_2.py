@@ -5,13 +5,25 @@ import subprocess
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+scratch_dir = os.path.abspath(os.path.join(script_dir, "..", "scratch"))
+
+os.chdir(script_dir)
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+if scratch_dir not in sys.path:
+    sys.path.insert(0, scratch_dir)
+
 installed_anything = False
 
-if not os.path.exists("sml_project2"):
-    print("Cloning sml_project2 utilities...")
-    run_cmd("git clone https://github.com/olsson-group/sml_project2.git")
+scratch_proj2 = os.path.join(scratch_dir, "sml_project2")
+
+if not os.path.exists(scratch_proj2):
+    print("Cloning sml_project2 utilities to scratch...")
+    os.makedirs(scratch_dir, exist_ok=True)
+    run_cmd(f"git clone https://github.com/olsson-group/sml_project2.git {scratch_proj2}")
     print("Installing sml_project2 requirements...")
-    run_cmd(f"{sys.executable} -m pip install -r sml_project2/requirements.txt")
+    run_cmd(f"{sys.executable} -m pip install -r {os.path.join(scratch_proj2, 'requirements.txt')}")
     installed_anything = True
 
 try:

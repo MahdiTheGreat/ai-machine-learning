@@ -22,20 +22,27 @@ for key in list(sys.modules.keys()):
 # If we re-run this script, we don't want to descend deeper into the folders.
 # We explicitly reset the working directory to the folder containing this script.
 script_dir = os.path.dirname(os.path.abspath(__file__))
+scratch_dir = os.path.abspath(os.path.join(script_dir, "..", "scratch"))
+
 os.chdir(script_dir)
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
+if scratch_dir not in sys.path:
+    sys.path.insert(0, scratch_dir)
 
 def run_cmd(cmd):
     subprocess.check_call(cmd, shell=True)
 
 installed_anything = False
 
-if not os.path.exists("sml_project3"):
-    print("Cloning sml_project3 utilities...")
-    run_cmd("git clone https://github.com/olsson-group/sml_project3.git")
+scratch_proj3 = os.path.join(scratch_dir, "sml_project3")
+
+if not os.path.exists(scratch_proj3):
+    print("Cloning sml_project3 utilities to scratch...")
+    os.makedirs(scratch_dir, exist_ok=True)
+    run_cmd(f"git clone https://github.com/olsson-group/sml_project3.git {scratch_proj3}")
     print("Installing requirements...")
-    run_cmd(f"{sys.executable} -m pip install -r sml_project3/requirements.txt")
+    run_cmd(f"{sys.executable} -m pip install -r {os.path.join(scratch_proj3, 'requirements.txt')}")
     installed_anything = True
 
 import shutil
@@ -44,11 +51,11 @@ import shutil
 # which hopelessly confuses Jupyter and Python's import cache. 
 # We physically move all python files from the inner folder to the outer folder,
 # and delete the inner folder, flattening the repository so it matches Project 2 exactly!
-inner_dir = os.path.join("sml_project3", "sml_project3")
+inner_dir = os.path.join(scratch_proj3, "sml_project3")
 if os.path.exists(inner_dir):
     for f in os.listdir(inner_dir):
         src = os.path.join(inner_dir, f)
-        dst = os.path.join("sml_project3", f)
+        dst = os.path.join(scratch_proj3, f)
         if os.path.exists(dst):
             if os.path.isdir(dst):
                 shutil.rmtree(dst)
@@ -248,7 +255,6 @@ baseline_cfm = train_cfm(baseline_cfm, "Baseline")
 painn_cfm = train_cfm(painn_cfm, "PaiNN")
 
 # SAMPLING & EVALUATION:
-from scipy.stats import entropy
 
 def generate_and_evaluate(cfm, name):
     print(f"\n=== Evaluating {name} ===")
@@ -316,8 +322,10 @@ def generate_and_evaluate(cfm, name):
         q_hist = q_hist + 1e-8
         return entropy(p_hist, q_hist)
         
-    kl_torsion = kl_div(sampled_torsions, ref_torsions)
-    kl_energy = kl_div(oracle_energies, ref_energies)
+    # KL(ref || generated): standard convention for measuring how well the generated
+    # distribution approximates the reference (ground truth) distribution.
+    kl_torsion = kl_div(ref_torsions, sampled_torsions)
+    kl_energy = kl_div(ref_energies, oracle_energies)
     
     print(f"KL Divergence (Torsion): {kl_torsion:.4f}")
     print(f"KL Divergence (Energy):  {kl_energy:.4f}")
