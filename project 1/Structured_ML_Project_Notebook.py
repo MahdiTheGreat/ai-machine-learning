@@ -100,6 +100,16 @@ from sml_project1.data import ScaffoldSplitter
 # Split datasets with scaffold stratification (Train: 80%, Val: 10%, Test: 10%)
 seed = 42
 torch.manual_seed(seed)
+# --- EXPLANATION OF SPLITTING METHOD ---
+# We use a ScaffoldSplitter rather than a random split. 
+# In chemistry, a "scaffold" refers to the core structural framework of a molecule.
+# Scaffold splitting groups molecules by their scaffold and completely isolates
+# these groups into either Train, Validation, or Test sets.
+# This ensures that the Test set contains entirely novel chemical families 
+# that the model has never seen before. It prevents data leakage and ensures
+# that we evaluate the model's true ability to generalize to new drugs, 
+# rather than just memorizing structures it saw during training.
+# ---------------------------------------
 splitter = ScaffoldSplitter()
 
 esol_smiles = [d.smiles for d in esol]
@@ -242,7 +252,7 @@ class MolecularGraphRegression(MolecularGraphNet):
    return torch.nn.functional.mse_loss(y.squeeze(), y_hat)
 
  def evaluate(self, y, y_hat):
-   pcc = metrics.get_pearson_corr(y, y_hat)
+   pcc = metrics.get_pearson_corr(y, y_hat)[0]
    rmse = metrics.get_rmse(y, y_hat)
    return {"pcc": pcc, "rmse": rmse}
 
@@ -379,8 +389,9 @@ def plot_results(results, model_name):
     plt.tight_layout()
     plt.show()
 
-def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs, val_factor=2, use_wandb=False):
-    print(f"Training {model.name} with {batch_size} batch size for {n_epochs} epochs...")
+def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs, val_factor=2, use_wandb=False, patience=15):
+    import copy
+    print(f"Training {model.name} with {batch_size} batch size for {n_epochs} epochs (Early Stopping Patience: {patience})...")
 
     if use_wandb:
      # Generate a dynamic project name
@@ -401,11 +412,16 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
     train_metrics = []
     val_metrics = []
 
+    best_val_loss = float('inf')
+    best_model_weights = None
+    patience_counter = 0
+
     for epoch in range(n_epochs):
         # === TRAINING ===
         model.train()
         epoch_train_loss = 0
-        epoch_train_metrics = {}
+        all_train_y = []
+        all_train_y_hat = []
 
         for i, batch in enumerate(train_dataloader):
             batch = batch.to(device)
@@ -426,19 +442,25 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
 
             epoch_train_loss += loss.item()
 
-            # Calculate metrics WITHOUT gradients
-            with torch.no_grad():
-                metrics_dict = model.evaluate(batch.y.cpu(), y_hat.detach().cpu())
-                for metric_name, metric_value in metrics_dict.items():
-                    if metric_name not in epoch_train_metrics:
-                        epoch_train_metrics[metric_name] = []
-                    epoch_train_metrics[metric_name].append(metric_value)
+            # Safely move predictions to CPU RAM to prevent GPU Out-of-Memory leaks 
+            # (sklearn metrics require CPU anyway). .view(-1) flattens the tensor 
+            # to prevent torch.cat crashes if a batch only has 1 molecule left.
+            all_train_y.append(batch.y.cpu().view(-1))
+            all_train_y_hat.append(y_hat.detach().cpu().view(-1))
 
+        # Calculate epoch train metrics properly
+        all_train_y = torch.cat(all_train_y, dim=0)
+        all_train_y_hat = torch.cat(all_train_y_hat, dim=0)
+        try:
+            avg_train_metrics = model.evaluate(all_train_y, all_train_y_hat)
+        except Exception:
+            avg_train_metrics = {"error": 0.0}
 
         # === VALIDATION ===
         model.eval()
         epoch_val_loss = 0
-        epoch_val_metrics = {}
+        all_val_y = []
+        all_val_y_hat = []
 
         with torch.no_grad():
             for val_batch in val_dataloader:
@@ -451,20 +473,21 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
                 loss = model.loss(val_batch.y, y_hat)
                 epoch_val_loss += loss.item()
 
-                # Calculate metrics
-                metrics_dict = model.evaluate(val_batch.y.cpu(), y_hat.cpu())
-                for metric_name, metric_value in metrics_dict.items():
-                    if metric_name not in epoch_val_metrics:
-                        epoch_val_metrics[metric_name] = []
-                    epoch_val_metrics[metric_name].append(metric_value)
+                # Offload to CPU to prevent memory leaks and flatten to 1D
+                all_val_y.append(val_batch.y.cpu().view(-1))
+                all_val_y_hat.append(y_hat.cpu().view(-1))
 
+        # Calculate epoch val metrics properly
+        all_val_y = torch.cat(all_val_y, dim=0)
+        all_val_y_hat = torch.cat(all_val_y_hat, dim=0)
+        try:
+            avg_val_metrics = model.evaluate(all_val_y, all_val_y_hat)
+        except Exception:
+            avg_val_metrics = {"error": 0.0}
 
         # Average metrics
         avg_train_loss = epoch_train_loss / max(1, len(train_dataloader))
         avg_val_loss = epoch_val_loss / max(1, len(val_dataloader))
-
-        avg_train_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in epoch_train_metrics.items()}
-        avg_val_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in epoch_val_metrics.items()}
 
 
         train_losses.append(avg_train_loss)
@@ -486,21 +509,40 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
              **{f"val_{k}": v for k, v in avg_val_metrics.items()}
          })
 
+        # Early Stopping Logic
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_model_weights = copy.deepcopy(model.state_dict())
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
+        if patience_counter >= patience:
+            print(f"Early stopping triggered at epoch {epoch+1}!")
+            break
+
+    # Restore the best model weights before testing
+    if best_model_weights is not None:
+        model.load_state_dict(best_model_weights)
+
     # === TEST EVALUATION ===
     test_dataloader = geom.loader.DataLoader(test_dataset, batch_size=batch_size*val_factor, drop_last=False)
     model.eval()
-    test_metrics = {}
+    all_test_y = []
+    all_test_y_hat = []
+    
     with torch.no_grad():
         for test_batch in test_dataloader:
             test_batch = test_batch.to(device)
             y_hat = model(test_batch)
-            metrics_dict = model.evaluate(test_batch.y.cpu(), y_hat.cpu())
-            for metric_name, metric_value in metrics_dict.items():
-                if metric_name not in test_metrics:
-                    test_metrics[metric_name] = []
-                test_metrics[metric_name].append(metric_value)
-                
-    final_test_metrics = {metric_name: np.mean(metric_values) for metric_name, metric_values in test_metrics.items()}
+            # Offload to CPU to prevent memory leaks and flatten to 1D
+            all_test_y.append(test_batch.y.cpu().view(-1))
+            all_test_y_hat.append(y_hat.cpu().view(-1))
+            
+    all_test_y = torch.cat(all_test_y, dim=0)
+    all_test_y_hat = torch.cat(all_test_y_hat, dim=0)
+    final_test_metrics = model.evaluate(all_test_y, all_test_y_hat)
+    
     print(f"  Final Test Metrics: {', '.join([f'{k}: {v:.4f}' for k, v in final_test_metrics.items()])}")
 
 
@@ -534,8 +576,8 @@ esol_max_vals = get_max_values(esol)
 
 repeat_factor=3
 
-reg_batch_size = 4
-reg_n_epochs = 60
+reg_batch_size = 32
+reg_n_epochs = 100
 reg_onehot_sizes=esol_max_vals[1:]
 
 import sys
@@ -616,8 +658,8 @@ reg_results["GAT"] = run_experiment(MolecularGraphRegression,
 
 # Setup for BBBP (Classification)
 bbbp_max_vals = get_max_values(bbbp)
-class_batch_size = 200
-class_n_epochs = 60
+class_batch_size = 32
+class_n_epochs = 100
 class_onehot_sizes = bbbp_max_vals[1:]
 in_features_classification = embedding_dim + sum([size + 1 for size in bbbp_max_vals[1:]])
 
@@ -651,6 +693,13 @@ cls_results["GAT"] = run_experiment(MolecularGraphClassification,
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)
 
 def plot_final_comparison(results_dict, task_name, metrics):
+    print(f"\n{'='*50}\nFINAL RESULTS FOR {task_name.upper()}\n{'='*50}")
+    for model_name, metrics_data in results_dict.items():
+        print(f"\nModel: {model_name}")
+        for metric in metrics:
+            mean, std = metrics_data[metric]
+            print(f"  Test {metric.upper()}: {mean:.4f} ± {std:.4f}")
+            
     num_metrics = len(metrics)
     fig, axes = plt.subplots(1, num_metrics, figsize=(6 * num_metrics, 5))
     if num_metrics == 1:
@@ -662,10 +711,18 @@ def plot_final_comparison(results_dict, task_name, metrics):
         means = [results_dict[m][metric][0] for m in models]
         stds = [results_dict[m][metric][1] for m in models]
         
-        axes[i].bar(models, means, yerr=stds, capsize=5, alpha=0.7)
+        bars = axes[i].bar(models, means, yerr=stds, capsize=5, alpha=0.7)
         axes[i].set_title(f'{task_name} - {metric.upper()}')
         axes[i].set_ylabel(metric.upper())
         axes[i].grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # Add numeric labels on top of the bars for easy reading
+        for bar, mean, std in zip(bars, means, stds):
+            yval = bar.get_height()
+            # Position the text slightly above the error bar
+            axes[i].text(bar.get_x() + bar.get_width()/2, yval + std + (0.02 * abs(yval)), 
+                         f'{mean:.3f}±{std:.3f}', 
+                         ha='center', va='bottom', fontsize=10, fontweight='bold')
         
     plt.tight_layout()
     plt.savefig(f"{task_name.lower()}_comparison.png")
