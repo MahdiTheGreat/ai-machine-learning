@@ -32,56 +32,9 @@ def filter_small_graphs(dataset):
     initial_len = len(dataset)
     filtered_data_list = [data_obj for data_obj in dataset if data_obj.x.size(0) >= 2]
 
-    # Create a new dataset object with the filtered data
-    # We need to replicate the structure of the original dataset,
-    # which includes the processed_paths and raw_paths
-    # Since MoleculeNet processes and stores data in 'processed' folder,
-    # we can point the new dataset to the same processed files if they exist.
-    # A simpler approach for in-memory filtering is to create a new InMemoryDataset
-    # if MoleculeNet doesn't easily support creating a new instance from a list of Data objects.
-    # However, given the error is in splitting, and the data is already loaded,
-    # directly using the list might be problematic for the splitter.
-
-    # A better approach is to create a dummy MoleculeNet-like object or see if
-    # MoleculeNet can be initialized with a list of Data objects.
-    # Let's try creating a new MoleculeNet instance with the filtered data list.
-    # This might require digging into MoleculeNet's constructor or finding an alternative.
-
-    # Let's try a simpler fix first by ensuring the dataset object itself is returned
-    # with its internal list updated, and hope the splitter can handle it.
-    # If not, we might need a more complex approach to create a new dataset object.
-
-    # The previous attempt to modify _data_list in place caused issues with the splitter.
-    # Let's try returning a new list and see if the splitter can work with that,
-    # although the error suggested it couldn't.
-
-    # Given the error trace points to the splitter expecting a Dataset object structure,
-    # and modifying _data_list in place didn't work, and returning a list didn't work,
-    # the most robust solution is to create a new Dataset object.
-    # Let's assume for now we can create a new MoleculeNet-like dataset from the list.
-    # This might not be directly supported, so a custom dataset class inheriting
-    # from a torch_geometric Dataset might be needed if this doesn't work.
-
-    # Let's revert to the previous successful state where filtering was done,
-    # but the issue was with the splitter expecting a Dataset object.
-    # The filtering itself is correct in producing a list of valid Data objects.
-    # The problem is how this filtered data is then passed to the splitter.
-
-    # The error is in `data.split_dataset`, which expects a `Dataset` object.
-    # The `filter_small_graphs` function is currently returning a modified `MoleculeNet`
-    # object whose internal `_data_list` has been replaced. This seems to break
-    # the `ScaffoldSplitter`.
-
-    # Let's try a different approach to filtering that doesn't mess with the internal
-    # structure of the original dataset object in a way that the splitter can't handle.
-    # We can create a new list of the filtered data and then somehow wrap it back
-    # into a structure that the splitter expects.
-
-    # A common pattern is to create a subset of the original dataset.
-    # Let's check if the Dataset object has a way to index or subset it.
-    # Yes, Dataset objects support indexing with a list of indices.
-    # We can get the indices of the valid graphs and create a new subset.
-
+    # To maintain compatibility with ScaffoldSplitter, we must return a true Dataset object 
+    # rather than just a modified list of Data objects. We do this by extracting the valid 
+    # indices and using PyTorch Geometric's built-in index_select() function to create a Subset.
     valid_indices = [i for i, data_obj in enumerate(dataset) if data_obj.x.size(0) >= 2]
     filtered_dataset = dataset.index_select(valid_indices)
     print(f"Filtered {initial_len - len(filtered_dataset)} molecules with < 2 nodes")
@@ -257,7 +210,7 @@ class MolecularGraphRegression(MolecularGraphNet):
    return {"pcc": pcc, "rmse": rmse}
 
 class DeepSet(torch.nn.Module):
-    def __init__(self, in_features, hidden_features, out_features=1, num_layers=2):
+    def __init__(self, in_features, hidden_features, out_features=1, num_layers=3):
         super().__init__()
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
@@ -288,7 +241,7 @@ from torch_geometric.nn import GCNConv, global_mean_pool
 import torch.nn as nn
 
 class GCN(torch.nn.Module):
-    def __init__(self,in_features, hidden_features, out_features=1, num_layers=2):
+    def __init__(self,in_features, hidden_features, out_features=1, num_layers=3):
         super().__init__()
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
@@ -305,8 +258,8 @@ class GCN(torch.nn.Module):
 
     def forward(self, x, edge_index, batch):
         # Apply GCN layers with ReLU
-        for i in range(len(self.layers) - 1):
-            x = self.layers[i](x, edge_index)
+        for layer in self.layers[:-1]:
+            x = layer(x, edge_index)
             x = torch.relu(x)
 
         # Apply final linear layer
@@ -314,29 +267,27 @@ class GCN(torch.nn.Module):
         return x
 
 
+# We use 3 Message Passing Layers to fairly compare against GCN and DeepSet.
+# To maintain a matching parameter count, we use single-head attention (heads=1).
+# The layers use ELU activations (as proposed in the foundational GAT paper), except the final GAT layer which uses ReLU.
 class GAT(torch.nn.Module):
-    def __init__(self, in_features, hidden_features, out_features=1, num_layers=2, heads=4):
+    def __init__(self, in_features, hidden_features, out_features=1, num_layers=3, heads=1):
         super().__init__()
         self.num_layers = num_layers
-        self.heads = heads # Number of attention heads for the first layer
+        self.heads = heads
         self.layers = nn.ModuleList()
 
-        # First GAT layer (with multiple heads)
-        self.layers.append(GATConv(in_features, hidden_features, heads=self.heads, concat=True))
-        self.layers.append(nn.ELU()) # Activation after first GAT layer
+        # First GAT layer
+        # Note: concat=False is used as a safety measure. Since heads=1, concatenating or averaging 
+        # is mathematically identical. If heads > 1 is ever used, False prevents the output dimension 
+        # from exploding and crashing the downstream Linear layer.
+        self.layers.append(GATConv(in_features, hidden_features, heads=self.heads, concat=False))
+        self.layers.append(nn.ELU())
 
-        # Hidden GAT layers (collapsing heads if needed, or keeping multi-head)
-        # For simplicity here, let's add more multi-head GAT layers if num_layers > 2
-        # A more complex implementation might alternate between multi-head and single-head
+        # Hidden GAT layers
         for _ in range(num_layers - 2):
-             self.layers.append(GATConv(hidden_features * self.heads, hidden_features, heads=self.heads, concat=True))
+             self.layers.append(GATConv(hidden_features, hidden_features, heads=self.heads, concat=False))
              self.layers.append(nn.ELU())
-
-
-        # Final layer (either GAT or Linear). Let's use a final GAT layer that collapses heads
-        self.layers.append(GATConv(hidden_features * self.heads, hidden_features, heads=1, concat=False))
-        self.layers.append(nn.ReLU()) # Activation after final GAT layer
-
 
         # Final linear layer for prediction
         self.layers.append(nn.Linear(hidden_features, out_features))
@@ -432,7 +383,8 @@ def train(model, train_dataset, batch_size, val_dataset, test_dataset, n_epochs,
             if epoch == 0 and i == 0:
                 print(f"\nArchitecture of {model.name} after first forward pass:")
                 print(model)
-                print("\n")
+                total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                print(f"Total Trainable Parameters: {total_params:,}\n")
 
             # Calculate loss
             loss = model.loss(batch.y, y_hat)
@@ -603,6 +555,11 @@ in_features = embedding_dim + sum([size + 1 for size in esol_max_vals[1:]])
 
 from collections import defaultdict
 
+def reset_weights(m):
+    """Recursively resets the parameters of a PyTorch module to new random values."""
+    if hasattr(m, 'reset_parameters'):
+        m.reset_parameters()
+
 def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_size, n_epochs, repeat_factor=3):
     print(f"\n{'='*50}")
     print(f"Running Experiment: {model_kwargs['name']} ({repeat_factor} replicates)")
@@ -611,10 +568,15 @@ def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_s
     all_test_metrics = defaultdict(list)
     start_time = time.time()
     
+    # We instantiate the model architecture here...
+    model = model_class(**model_kwargs).to(device)
+    
     for i in range(repeat_factor):
         print(f"\n--- Replicate {i+1}/{repeat_factor} ---")
-        # Re-initialize model to get random weights for each replicate
-        model = model_class(**model_kwargs).to(device)
+        # ...but we MUST force PyTorch to assign completely new random weights for each replicate!
+        # Otherwise, the loop just continues training the exact same model!
+        model.apply(reset_weights)
+        
         hist = train(model, train_ds, batch_size, val_ds, test_ds, n_epochs)
         
         for k, v in hist['test_metrics'].items():
@@ -651,7 +613,7 @@ reg_results["GCN"] = run_experiment(MolecularGraphRegression,
 
 reg_results["GAT"] = run_experiment(MolecularGraphRegression, 
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim), 
-                "net": GAT(in_features, hidden_features, heads=4), 
+                "net": GAT(in_features, hidden_features), 
                 "onehot_sizes": reg_onehot_sizes, 
                 "name": "GAT Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
@@ -687,7 +649,7 @@ cls_results["GCN"] = run_experiment(MolecularGraphClassification,
 
 cls_results["GAT"] = run_experiment(MolecularGraphClassification, 
                {"embedding": torch.nn.Embedding(num_embeddings=bbbp_max_vals[0]+1, embedding_dim=embedding_dim), 
-                "net": GAT(in_features_classification, hidden_features, heads=4), 
+                "net": GAT(in_features_classification, hidden_features), 
                 "onehot_sizes": class_onehot_sizes, 
                 "name": "GAT Classification"},
                bbbp_train_dataset, bbbp_val_dataset, bbbp_test_dataset, class_batch_size, class_n_epochs)

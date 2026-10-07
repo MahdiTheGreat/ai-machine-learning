@@ -64,6 +64,42 @@ if os.path.exists(inner_dir):
         shutil.move(src, dst)
     shutil.rmtree(inner_dir)
 
+# FIX: painn.py contains a device mismatch bug where equivariant_node_features is created on CPU.
+# We patch it dynamically before it gets imported!
+painn_file = os.path.join(scratch_proj3, "painn.py")
+if os.path.exists(painn_file):
+    with open(painn_file, "r") as f:
+        painn_code = f.read()
+    import re
+    painn_code_fixed = re.sub(
+        r"(batch\.equivariant_node_features\s*=\s*torch\.zeros\(\s*batch\.pos\.shape\[0\],\s*self\.n_features,\s*3)(\s*\))",
+        r"\1, device=batch.pos.device\2",
+        painn_code
+    )
+    if painn_code_fixed != painn_code:
+        painn_code = painn_code_fixed
+
+    # Fix 2: Device/shape mismatch for the time tensor 't' during CFM sampling
+    target_str_2 = "t_batch = t[batch.batch, None]"
+    fixed_str_2 = """t = t.to(batch.pos.device)
+        if t.size(0) == batch.pos.size(0):
+            t_batch = t.unsqueeze(-1)
+        else:
+            t_batch = t[batch.batch.to(t.device), None]"""
+    if target_str_2 in painn_code:
+        painn_code = painn_code.replace(target_str_2, fixed_str_2)
+        
+    # Fix 3: The batch metadata (atom_idx, edge_index) might be on CPU during evaluation.
+    target_str_3 = "batch = batch.clone()"
+    fixed_str_3 = "batch = batch.clone().to(batch.pos.device)"
+    if target_str_3 in painn_code:
+        painn_code = painn_code.replace(target_str_3, fixed_str_3)
+        
+    with open(painn_file, "w") as f:
+        f.write(painn_code)
+    print("Successfully patched painn.py bugs.")
+
+
 try:
     import torch_geometric
     import mdtraj
@@ -139,12 +175,25 @@ class BaseDistribution:
         self.std = 0.1277
         self.device = device
     
-    def sample(self, n_samples):
-        # Generates a tensor of dimension [n_samples * 15, 3] for a batch of pent-1-ene
         # Sample isotropic normal
         samples = torch.randn(n_samples, 15, 3, device=self.device) * self.std
+        
         # Remove translational symmetry by moving center of mass to origin
         samples = samples - samples.mean(dim=1, keepdim=True)
+        
+        # Correction: Removing the mean reduces the variance by a factor of (N-1)/N. 
+        # We must rescale the samples to ensure they match the true prior distribution's standard deviation.
+        N = 15
+        correction_factor = (N / (N - 1)) ** 0.5
+        samples = samples * correction_factor
+        
+        # Verify properties (numerics)
+        if n_samples > 0:
+            com = samples.mean(dim=1)
+            assert torch.allclose(com, torch.zeros_like(com), atol=1e-6), "Center of mass is not at the origin!"
+            sample_std = samples.std()
+            assert torch.isclose(sample_std, torch.tensor(self.std, device=self.device), atol=1e-2), f"Standard deviation changed! {sample_std} vs {self.std}"
+
         return samples.view(-1, 3)
 
 # MODEL: BASELINE MODEL
@@ -163,8 +212,16 @@ class BaselineModel(torch.nn.Module):
 
     def forward(self, t, batch):
         # batch.pos is [n_atoms, 3]
-        # t is [batch_size]
-        t_batch = t[batch.batch]
+        # Ensure t is on the exact same device as the batch features
+        t = t.to(batch.pos.device)
+        
+        # During training, t is [batch_size]. During CFM sampling, t is [n_atoms].
+        if t.size(0) == batch.pos.size(0):
+            t_batch = t
+        else:
+            # Safely move batch.batch to the same device before indexing
+            t_batch = t[batch.batch.to(t.device)]
+            
         t_expanded = t_batch.unsqueeze(1) if t_batch.dim() == 1 else t_batch
         x = torch.cat([batch.pos, t_expanded], dim=1)
         velocity = self.net(x)
@@ -218,12 +275,17 @@ if DEBUG_MODE:
     print(f"DEBUG MODE: subset dataset to {len(dataset)} molecules")
 dataloader = geom.loader.DataLoader(dataset, batch_size=128, shuffle=True)
 
-def train_cfm(cfm_model, name):
-    print(f"\n--- Training {name} ---")
+def train_cfm(cfm_model, name, epochs=1000, print_freq=25, early_stop_patience=100):
+    cfm_model = cfm_model.to(device)
+    cfm_model.train()
+    print(f"\n--- Training {name} for {epochs} epochs ---")
     timer = util.Timer()
     os.makedirs(f"results/{name}", exist_ok=True)
     step = 0
-    for epoch in range(n_epochs):
+    
+    best_loss = float('inf')
+    early_stop_counter = 0
+    for epoch in range(epochs):
         epoch_loss = 0
         for i, batch in enumerate(dataloader):
             batch = batch.to(device)
@@ -234,21 +296,36 @@ def train_cfm(cfm_model, name):
             if epoch == 0 and i == 0:
                 print(f"\nArchitecture for {name} after first forward pass:")
                 print(cfm_model)
-                print("\n")
+                total_params = sum(p.numel() for p in cfm_model.parameters() if p.requires_grad)
+                print(f"Total Trainable Parameters: {total_params:,}\n")
                 
             cfm_model.training_step(loss)
             epoch_loss += loss.item()
             step += 1
             
             if (step + 1) % 1000 == 0 and not DEBUG_MODE:
-                mlops.save(cfm_model, f"results/{name}/model_{step}.pkl")
+                torch.save(cfm_model.state_dict(), f"results/{name}/model_{step}.pt")
 
         epoch_loss /= max(1, len(dataloader))
         cfm_model.on_epoch_end(epoch_loss)
-        if epoch % max(1, (n_epochs // 10)) == 0 or epoch == n_epochs - 1:
+        
+        if epoch % print_freq == 0 or epoch == epochs - 1:
             print(f"Epoch: {epoch}, Step: {step}, Time: {timer}, Loss: {epoch_loss:.4f}")
             
-    mlops.save(cfm_model, f"results/{name}/model_latest.pkl")
+        # Early Stopping Logic
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
+            early_stop_counter = 0
+            if not DEBUG_MODE:
+                torch.save(cfm_model.state_dict(), f"results/{name}/model_best.pt")
+        else:
+            early_stop_counter += 1
+            if early_stop_counter >= early_stop_patience:
+                print(f"Early stopping triggered at Epoch {epoch}! No improvement for {early_stop_patience} epochs.")
+                break
+                
+    if not DEBUG_MODE:
+        torch.save(cfm_model.state_dict(), f"results/{name}/model_latest.pt")
     return cfm_model
 
 baseline_cfm = train_cfm(baseline_cfm, "Baseline")
