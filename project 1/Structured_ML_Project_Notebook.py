@@ -204,14 +204,6 @@ class MolecularGraphNet(torch.nn.Module):
     self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
 
   def forward(self, batch):
-
-    # Implement in children
-    # We Setup the forward pass of the model for a classification task
-    # this includes embedding the input data, applying the graph network,
-    # pooling the results, and predicting an output.
-    # where batch.x denotes the node features,
-    # batch.batch denotes which graph each node belongs to
-
     """
     FEATURE PRE-PROCESSING:
     Neural networks cannot directly process raw categorical integers (like atomic numbers).
@@ -222,34 +214,22 @@ class MolecularGraphNet(torch.nn.Module):
     3. Concatenation: We glue the 32D embedding and all one-hot vectors together horizontally 
        to create the final, continuous feature vector for each atom.
     """
-
-    #x = batch.x.to(torch.float32)  # prevent a type mismatch
-    #print('batch is ', batch)
-    x=batch.x
+    x = batch.x
     atomic_embedded = self.embedding(x[:, 0])  # [num_nodes, 32]
+
     # Features 1-8: One-hot encode
     onehot_features = []
     for i, num_classes in enumerate(self.onehot_sizes, start=1):
-     #print(f"Feature index: {i}, num_classes: {num_classes}")
-     #print(f"Values for feature {i}: {x[:, i]}")
-     # Add 1 to num_classes because values are 0-indexed and can go up to num_classes - 1
-     # We cannot cast `batch.x` to float32 early because it contains discrete
-     # categorical integers (like atomic numbers). Both `nn.Embedding` and
-     # `nn.functional.one_hot` strictly require integer indices. We cast the
-     # features to float32 *after* encoding them (see line 190).
-
-     onehot = nn.functional.one_hot(x[:, i], num_classes=num_classes + 1).float()
-     onehot_features.append(onehot)
+      onehot = nn.functional.one_hot(x[:, i], num_classes=num_classes + 1).float()
+      onehot_features.append(onehot)
 
     # Concatenate: embedded atomic number + all one-hot features
     x = torch.cat([atomic_embedded] + onehot_features, dim=1)
 
-    #print("x shape after embedding is ",x.shape)
-
     # Apply GNN layers
     x = self.net(x, batch.edge_index, batch.batch)
+
     # Pool graph-level representation
-    #print("net out shape: ",x.shape)
     x = geom.nn.global_mean_pool(x, batch.batch)
     return x.squeeze()
 
@@ -388,33 +368,26 @@ class GAT(torch.nn.Module):
     def __init__(self, in_features, hidden_features, out_features=1, num_layers=3, heads=1, concat=True):
         super().__init__()
         self.num_layers = num_layers
-        self.heads = heads # Number of attention heads for the first layer
+        self.heads = heads # Number of attention heads
+        self.concat = concat
         self.layers = nn.ModuleList()
 
-        # First GAT layer (with multiple heads)
+        # Output dimension of GATConv:
+        # If concat=True: out_dim = hidden_features * heads
+        # If concat=False: out_dim = hidden_features (averaged over heads)
+        gat_out_features = hidden_features * heads if concat else hidden_features
 
-        # Note: concat=False is used as a safety measure. Since heads=1, concatenating or averaging
-        # is mathematically identical. If heads > 1 is ever used, False prevents the output dimension
-        # from exploding and crashing the downstream Linear layer.
-
+        # First GAT layer (takes in_features -> outputs gat_out_features)
         self.layers.append(GATConv(in_features, hidden_features, heads=self.heads, concat=concat))
         self.layers.append(nn.ELU()) # Activation after first GAT layer
 
-        # Hidden GAT layers (collapsing heads if needed, or keeping multi-head)
-        # For simplicity here, let's add more multi-head GAT layers if num_layers > 2
-        # A more complex implementation might alternate between multi-head and single-head
+        # Hidden GAT layers (must accept gat_out_features from previous layer)
         for _ in range(num_layers - 2):
-             self.layers.append(GATConv(hidden_features, hidden_features, heads=self.heads, concat=concat))
+             self.layers.append(GATConv(gat_out_features, hidden_features, heads=self.heads, concat=concat))
              self.layers.append(nn.ELU())
 
-
-        # Final layer (either GAT or Linear). Let's use a final GAT layer that collapses heads
-        # self.layers.append(GATConv(hidden_features * self.heads, hidden_features, heads=1, concat=False))
-        # self.layers.append(nn.ReLU()) # Activation after final GAT layer
-
-
-        # Final linear layer for prediction
-        self.layers.append(nn.Linear(hidden_features, out_features))
+        # Final linear layer for prediction (takes gat_out_features -> out_features)
+        self.layers.append(nn.Linear(gat_out_features, out_features))
 
 
     def forward(self, x, edge_index, batch):
