@@ -369,8 +369,89 @@ def train_cfm(cfm_model, name, epochs=1000, print_freq=25, early_stop_patience=1
 
 
 # SAMPLING & EVALUATION:
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import entropy, gaussian_kde
+from scipy.ndimage import gaussian_filter1d
 
-def generate_and_evaluate(cfm, name):
+# KL Divergence on Discrete Bins (with optional circular boundary smoothing for torsions)
+def kl_div(p, q, bins=50, is_torsion=False):
+    p = np.asarray(p).flatten()
+    q = np.asarray(q).flatten()
+    if is_torsion:
+        hist_range = (-np.pi, np.pi)
+    else:
+        hist_range = (min(p.min(), q.min()), max(p.max(), q.max()))
+
+    p_hist, _ = np.histogram(p, bins=bins, range=hist_range, density=True)
+    q_hist, _ = np.histogram(q, bins=bins, range=hist_range, density=True)
+
+    if is_torsion:
+        p_hist = gaussian_filter1d(p_hist, sigma=0.8, mode='wrap')
+        q_hist = gaussian_filter1d(q_hist, sigma=0.8, mode='wrap')
+
+    p_hist = p_hist + 1e-8
+    q_hist = q_hist + 1e-8
+    p_prob = p_hist / np.sum(p_hist)
+    q_prob = q_hist / np.sum(q_hist)
+    return entropy(p_prob, q_prob)
+
+# Continuous KL Divergence using Kernel Density Estimation (KDE)
+def kl_div_kde(p, q, is_torsion=False, n_eval_points=1000):
+    p = np.asarray(p).flatten()
+    q = np.asarray(q).flatten()
+    if is_torsion:
+        grid = np.linspace(-np.pi, np.pi, n_eval_points)
+        dx = grid[1] - grid[0]
+        p_extended = np.concatenate([p - 2*np.pi, p, p + 2*np.pi])
+        q_extended = np.concatenate([q - 2*np.pi, q, q + 2*np.pi])
+        kde_p = gaussian_kde(p_extended)
+        kde_q = gaussian_kde(q_extended)
+        p_density = kde_p(grid) * 3.0
+        q_density = kde_q(grid) * 3.0
+    else:
+        min_val = min(np.percentile(p, 0.5), np.percentile(q, 0.5))
+        max_val = max(np.percentile(p, 99.5), np.percentile(q, 99.5))
+        grid = np.linspace(min_val, max_val, n_eval_points)
+        dx = grid[1] - grid[0]
+        kde_p = gaussian_kde(p)
+        kde_q = gaussian_kde(q)
+        p_density = kde_p(grid)
+        q_density = kde_q(grid)
+
+    p_density = p_density / (np.sum(p_density) * dx)
+    q_density = q_density / (np.sum(q_density) * dx)
+    mask = p_density > 1e-12
+    kl = np.sum(p_density[mask] * np.log(p_density[mask] / np.maximum(q_density[mask], 1e-12))) * dx
+    return max(0.0, float(kl))
+
+# Reusable Plotting Function for 4 Separate Graphs
+def plot_dist(ref, gen, xlabel, title, filename, mode='bins', val_range=None, out_dir='results'):
+    ref = np.asarray(ref).flatten()
+    gen = np.asarray(gen).flatten()
+    os.makedirs(out_dir, exist_ok=True)
+    plt.figure(figsize=(8, 6))
+    if mode == 'bins':
+        plt.hist(ref, bins=50, range=val_range, density=True, alpha=0.5, label='Reference')
+        plt.hist(gen, bins=50, range=val_range, density=True, alpha=0.5, label='Generated')
+    elif mode == 'kernel':
+        if val_range is None:
+            val_range = (min(ref.min(), gen.min()), max(ref.max(), gen.max()))
+        grid = np.linspace(val_range[0], val_range[1], 300)
+        plt.plot(grid, gaussian_kde(ref)(grid), label='Reference', linewidth=2)
+        plt.plot(grid, gaussian_kde(gen)(grid), label='Generated', linewidth=2)
+
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel('Density')
+    plt.legend()
+    plt.savefig(os.path.join(out_dir, filename))
+    plt.show()
+    plt.close()
+
+def generate_and_evaluate(cfm, name, basedistribution=None):
+    if basedistribution is None:
+        basedistribution = globals().get('basedistribution')
     print(f"\n=== Evaluating {name} ===")
     cfm.eval()
     n_samples = 10 if DEBUG_MODE else 100
@@ -378,23 +459,14 @@ def generate_and_evaluate(cfm, name):
     print(f"Loaded BaseDistributionDataset: {len(base_dataset)} molecules")
     base_loader = geom.loader.DataLoader(base_dataset, batch_size=512, shuffle=False)
     
-    """
-    The model DOES NOT output torsion or energy. It predicts velocity vectors 
-    to push random noise into the physical 3D coordinates (x, y, z) of a molecule.
-    Torsion and Energy are only calculated AFTER the molecule is generated. 
-    We feed the generated 3D coordinates into the Evaluator and Oracle to verify 
-    if the 3D shape the model built is physically realistic.
-    """
-
     print(f"Sampling {n_samples} molecules...")
     samples = cfm.sample(base_loader, n_steps=100)
     samples = samples.cpu().numpy()
 
     # Evaluate Torsions
-    # In chemistry, a torsion angle (also called a dihedral angle) 
-    # measures the "twist" of a molecule. 
     torsion_evaluator = torsion.TorsionEvaluator()
     sampled_torsions = torsion_evaluator.evaluate(samples[-1])
+    sampled_torsions = np.asarray(sampled_torsions).flatten()
 
     # Compute reference dataset torsions
     ref_dataset = data.Pentene1Dataset()
@@ -407,12 +479,12 @@ def generate_and_evaluate(cfm, name):
         ref_pos.append(batch.pos.view(-1, 15, 3).numpy())
     ref_pos = np.concatenate(ref_pos, axis=0)
     ref_torsions = torsion_evaluator.evaluate(ref_pos)
+    ref_torsions = np.asarray(ref_torsions).flatten()
 
     # Evaluate energies with Oracle
     print("Evaluating energies with Oracle...")
     oracle = outil.load_oracle(device=device)
 
-    # Dataset of generated samples
     sol_samples = torch.tensor(samples[-1], device=device, dtype=torch.float32)
     samples_dataset = data.Pentene1Dataset(sol_samples.cpu().numpy())
     samples_dataloader = geom.loader.DataLoader(samples_dataset, batch_size=512, shuffle=False)
@@ -424,9 +496,8 @@ def generate_and_evaluate(cfm, name):
         if hasattr(oracle_energies, "detach"):
             oracle_energies = oracle_energies.detach().cpu().numpy()
         oracles.append(oracle_energies)
-    oracle_energies = np.concatenate(oracles, axis=0)
+    oracle_energies = np.concatenate(oracles, axis=0).flatten()
 
-    # Reference energies
     refs = []
     for batch in ref_loader:
         batch = batch.to(device)
@@ -434,49 +505,40 @@ def generate_and_evaluate(cfm, name):
         if hasattr(ref_energy, "detach"):
             ref_energy = ref_energy.detach().cpu().numpy()
         refs.append(ref_energy)
-    ref_energies = np.concatenate(refs, axis=0)
+    ref_energies = np.concatenate(refs, axis=0).flatten()
 
-    # KL Divergence Metric
-    def kl_div(p, q, bins=50):
-        min_val = min(p.min(), q.min())
-        max_val = max(p.max(), q.max())
-        #`density=True` normalizes the histogram so the total area 
-        # under the curve equals 1. This turns the raw counts into a Distribution.
-        p_hist, _ = np.histogram(p, bins=bins, range=(min_val, max_val), density=True)
-        q_hist, _ = np.histogram(q, bins=bins, range=(min_val, max_val), density=True)
-        p_hist = p_hist + 1e-8
-        q_hist = q_hist + 1e-8
-        return entropy(p_hist, q_hist)
+    # KL Divergences
+    kl_torsion_bins = kl_div(ref_torsions, sampled_torsions, is_torsion=True)
+    kl_energy_bins = kl_div(ref_energies, oracle_energies, is_torsion=False)
+    kl_torsion_kde = kl_div_kde(ref_torsions, sampled_torsions, is_torsion=True)
+    kl_energy_kde = kl_div_kde(ref_energies, oracle_energies, is_torsion=False)
 
-    kl_torsion = kl_div(ref_torsions, sampled_torsions)
-    kl_energy = kl_div(ref_energies, oracle_energies)
+    print(f"Histogram KL (Torsion): {kl_torsion_bins:.4f}")
+    print(f"Histogram KL (Energy):  {kl_energy_bins:.4f}")
+    print(f"KDE KL (Torsion):       {kl_torsion_kde:.4f}")
+    print(f"KDE KL (Energy):        {kl_energy_kde:.4f}")
 
-    print(f"KL Divergence (Torsion): {kl_torsion:.4f}")
-    print(f"KL Divergence (Energy):  {kl_energy:.4f}")
-    # Visualization
-    os.makedirs(f"results/{name}", exist_ok=True)
+    # 4 Separate Graphs
+    out_dir = f"results/{name}"
+    # 1. Torsion (Bins)
+    plot_dist(ref_torsions, sampled_torsions, 'Torsion Angle',
+              f'{name} CFM: Torsion (Bins) - KL: {kl_torsion_bins:.4f}', 'torsion_bins.png',
+              mode='bins', val_range=(-np.pi, np.pi), out_dir=out_dir)
 
-    plt.figure(figsize=(8, 6))
-    plt.hist(ref_torsions, bins=50, density=True, alpha=0.5, label='Reference')
-    plt.hist(sampled_torsions, bins=50, density=True, alpha=0.5, label='Generated')
-    plt.title(f'{name} CFM: Torsion Distribution (KL: {kl_torsion:.4f})')
-    plt.xlabel('Torsion Angle')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.savefig(f'results/{name}/torsion_dist.png')
-    plt.show()
-    plt.close()
+    # 2. Torsion (Kernel)
+    plot_dist(ref_torsions, sampled_torsions, 'Torsion Angle',
+              f'{name} CFM: Torsion (Kernel) - KL: {kl_torsion_kde:.4f}', 'torsion_kernel.png',
+              mode='kernel', val_range=(-np.pi, np.pi), out_dir=out_dir)
 
-    plt.figure(figsize=(8, 6))
-    plt.hist(ref_energies, bins=50, density=True, alpha=0.5, label='Reference')
-    plt.hist(oracle_energies, bins=50, density=True, alpha=0.5, label='Generated')
-    plt.title(f'{name} CFM: Energy Distribution (KL: {kl_energy:.4f})')
-    plt.xlabel('Energy')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.savefig(f'results/{name}/energy_dist.png')
-    plt.show()
-    plt.close()
+    # 3. Energy (Bins)
+    plot_dist(ref_energies, oracle_energies, 'Energy',
+              f'{name} CFM: Energy (Bins) - KL: {kl_energy_bins:.4f}', 'energy_bins.png',
+              mode='bins', out_dir=out_dir)
+
+    # 4. Energy (Kernel)
+    plot_dist(ref_energies, oracle_energies, 'Energy',
+              f'{name} CFM: Energy (Kernel) - KL: {kl_energy_kde:.4f}', 'energy_kernel.png',
+              mode='kernel', out_dir=out_dir)
 
 # %%
 import sys
