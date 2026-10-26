@@ -97,6 +97,12 @@ except ImportError:
 
 # %%
 import os
+import sys
+
+for p in ['project 2', '.', 'sml_project2']:
+    if os.path.exists(p) and os.path.abspath(p) not in sys.path:
+        sys.path.insert(0, os.path.abspath(p))
+
 import random
 import e3nn
 from e3nn import o3
@@ -121,7 +127,7 @@ data.download_all(path='data/MD17')
 # UNITTEST: Setup test data
 
 def get_test_batch(batch_size=2, n_atoms=9):
-  atom_types = [1,6,8]
+  atom_types = [1,6,7,8]
 
   test_batch = geom.data.Batch.from_data_list([
         geom.data.Data(
@@ -134,44 +140,63 @@ def get_test_batch(batch_size=2, n_atoms=9):
   ])
   return test_batch
 
+# UNITTEST: Test model can forward and forces and energies have the correct shapes
+
 test_batch = get_test_batch()
-print("=== PyTorch Geometric Batch Object ===")
 print(test_batch)
 
-print("\n=== How Data is Stored ===")
-print(f"Coordinates (pos) [shape={test_batch.pos.shape}, dtype={test_batch.pos.dtype}]:")
-print(test_batch.pos[:9])  # First molecule's 9 atoms in Ångströms
+# %%
+# DATA EXPLORATION: Read and Inspect an Actual Batch from MD17
 
-print(f"\nAtomic Numbers (z) [shape={test_batch.z.shape}]:")
-print(test_batch.z[:9])
+def inspect_batch(batch, title="Batch"):
+    """Inspects stored tensor attributes and computes on-the-fly pairwise distances."""
+    print(f"=== {title} Overview ===")
+    print(batch)
 
-print(f"\nEnergy (energy) [shape={test_batch.energy.shape}]:")
-print(test_batch.energy)
+    print("\n=== Stored Properties ===")
+    print(f"Coordinates (pos) [shape={batch.pos.shape}, dtype={batch.pos.dtype}]:")
+    print(batch.pos[:9])  # First molecule's 9 atoms in Ångströms
 
-print(f"\nForces (force) [shape={test_batch.force.shape}]:")
-print(test_batch.force[:3])  # First 3 atoms' forces
+    print(f"\nAtomic Numbers (z) [shape={batch.z.shape}]:")
+    print(batch.z[:9])
 
-# Compute pairwise edge distances on-the-fly (matching Baseline.forward)
-edge_src, edge_dst = [], []
-for i in range(test_batch.num_graphs):
-    nodes = (test_batch.batch == i).nonzero(as_tuple=True)[0]
-    n = len(nodes)
-    src = nodes.repeat_interleave(n)
-    dst = nodes.repeat(n)
-    mask = src != dst  # Exclude self-loops
-    edge_src.append(src[mask])
-    edge_dst.append(dst[mask])
+    print(f"\nPotential Energy (energy) [shape={batch.energy.shape}]:")
+    print(batch.energy)
 
-edge_src = torch.cat(edge_src)
-edge_dst = torch.cat(edge_dst)
-edge_vec = test_batch.pos[edge_dst] - test_batch.pos[edge_src]
-edge_length = edge_vec.norm(dim=1)
+    print(f"\nForces (force) [shape={batch.force.shape}]:")
+    print(batch.force[:3])  # First 3 atoms' forces
 
-print("\n=== Computed Pairwise Distances (edge_length) ===")
-print(f"Total directed edges across {test_batch.num_graphs} molecules: {edge_length.shape[0]} (72 edges per 9-atom molecule)")
-print(f"Distance tensor shape: {edge_length.shape}")
-print(f"Sample pairwise distances for Molecule 0 (in Ångströms):\n{edge_length[:8].round(decimals=3)}")
-print(f"Summary stats: Min = {edge_length.min():.3f} Å, Max = {edge_length.max():.3f} Å, Mean = {edge_length.mean():.3f} Å")
+    # Compute pairwise edge distances on-the-fly (matching Baseline.forward)
+    edge_src, edge_dst = [], []
+    for i in range(batch.num_graphs):
+        nodes = (batch.batch == i).nonzero(as_tuple=True)[0]
+        n = len(nodes)
+        src = nodes.repeat_interleave(n)
+        dst = nodes.repeat(n)
+        mask = src != dst  # Exclude self-loops
+        edge_src.append(src[mask])
+        edge_dst.append(dst[mask])
+
+    edge_src = torch.cat(edge_src)
+    edge_dst = torch.cat(edge_dst)
+    edge_vec = batch.pos[edge_dst] - batch.pos[edge_src]
+    edge_length = edge_vec.norm(dim=1)
+
+    print("\n=== Computed Pairwise Distances (edge_length) ===")
+    print(f"Total directed edges across {batch.num_graphs} molecules: {edge_length.shape[0]} (72 edges per 9-atom molecule)")
+    print(f"Distance tensor shape: {edge_length.shape}")
+    print(f"Sample pairwise distances for Molecule 0 (in Ångströms):\n{edge_length[:8].round(decimals=3)}")
+    print(f"Summary stats: Min = {edge_length.min():.3f} Å, Max = {edge_length.max():.3f} Å, Mean = {edge_length.mean():.3f} Å")
+
+
+def get_real_batch(batch_size=2):
+    """Pulls an actual batch of ethanol conformations from the MD17 dataset."""
+    ethanol_ds = data.get_dataset('ethanol')
+    return geom.data.Batch.from_data_list([ethanol_ds[i] for i in range(batch_size)])
+
+# Read and inspect an actual batch of real data
+real_batch = get_real_batch(batch_size=2)
+inspect_batch(real_batch, title="Actual Ethanol Batch (MD17)")
 
 # %% [markdown]
 # ## Architecture Design and Data Flow

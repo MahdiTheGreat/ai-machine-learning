@@ -282,19 +282,39 @@ class MolecularGraphClassification(MolecularGraphNet):
     return {"roc_auc": roc_auc}
 
 class MolecularGraphRegression(MolecularGraphNet):
- def __init__(self, embedding, net,onehot_sizes, name="MolecularGraphRegression"):
-   super().__init__(embedding, net,onehot_sizes, name=name)
+  def __init__(self, embedding, net, onehot_sizes, name="MolecularGraphRegression", mean=0.0, std=1.0):
+    super().__init__(embedding, net, onehot_sizes, name=name)
+    # Target standardization parameters (mean and standard deviation)
+    self.register_buffer("mean", torch.as_tensor(mean, dtype=torch.float32))
+    self.register_buffer("std", torch.as_tensor(std, dtype=torch.float32))
 
- def forward(self, batch):
-   return super().forward(batch)
+  def forward(self, batch):
+    return super().forward(batch)
 
- def loss(self, y, y_hat):
-   return torch.nn.functional.mse_loss(y.squeeze(), y_hat)
+  def loss(self, y, y_hat):
+    # Standardize ground truth y to normalized space for MSE loss
+    mean = self.mean.to(y.device)
+    std = self.std.to(y.device)
+    y_norm = (y.squeeze().float() - mean) / std if std > 0 else y.squeeze().float()
+    return torch.nn.functional.mse_loss(y_norm, y_hat)
 
- def evaluate(self, y, y_hat):
-   pcc = metrics.get_pearson_corr(y, y_hat)[0]
-   rmse = metrics.get_rmse(y, y_hat)
-   return {"pcc": pcc, "rmse": rmse}
+  def evaluate(self, y, y_hat):
+    # Revert normalized model predictions back to original physical scale before computing PCC and RMSE
+    mean = self.mean.to(y_hat.device)
+    std = self.std.to(y_hat.device)
+    y_hat_orig = y_hat * std + mean if std > 0 else y_hat
+    pcc = metrics.get_pearson_corr(y, y_hat_orig)[0]
+    rmse = metrics.get_rmse(y, y_hat_orig)
+    return {"pcc": pcc, "rmse": rmse}
+
+  def predict(self, batch):
+    """Predicts values and returns them in original physical units."""
+    self.eval()
+    with torch.no_grad():
+      y_hat = self.forward(batch)
+      mean = self.mean.to(y_hat.device)
+      std = self.std.to(y_hat.device)
+      return y_hat * std + mean if std > 0 else y_hat
 
 class DeepSet(torch.nn.Module):
     def __init__(self, in_features, hidden_features, out_features=1, num_layers=3):
@@ -700,6 +720,12 @@ embedding_dim=32
 in_features = embedding_dim + sum([size + 1 for size in esol_max_vals[1:]])
 print(f"in features: {in_features}")
 
+# Target standardization parameters (computed strictly on the training set to prevent data leakage)
+esol_train_targets = torch.cat([d.y.view(-1) for d in esol_train_dataset]).float()
+esol_mean = esol_train_targets.mean().item()
+esol_std = esol_train_targets.std().item()
+print(f"Target Standardization (ESOL) -> Train Mean: {esol_mean:.4f}, Train Std: {esol_std:.4f}")
+
 # --- REGRESSION EXPERIMENTS (ESOL) ---
 
 reg_results = {}
@@ -707,6 +733,8 @@ reg_results["DeepSet"] = run_experiment(MolecularGraphRegression,
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim),
                 "net": DeepSet(in_features, hidden_features),
                 "onehot_sizes": reg_onehot_sizes,
+                "mean": esol_mean,
+                "std": esol_std,
                 "name": "DeepSet Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
@@ -715,6 +743,8 @@ reg_results["GCN"] = run_experiment(MolecularGraphRegression,
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim),
                 "net": GCN(in_features, hidden_features),
                 "onehot_sizes": reg_onehot_sizes,
+                "mean": esol_mean,
+                "std": esol_std,
                 "name": "GCN Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
@@ -723,6 +753,8 @@ reg_results["GAT"] = run_experiment(MolecularGraphRegression,
                {"embedding": torch.nn.Embedding(num_embeddings=esol_max_vals[0]+1, embedding_dim=embedding_dim),
                 "net": GAT(in_features, hidden_features),
                 "onehot_sizes": reg_onehot_sizes,
+                "mean": esol_mean,
+                "std": esol_std,
                 "name": "GAT Regression"},
                esol_train_dataset, esol_val_dataset, esol_test_dataset, reg_batch_size, reg_n_epochs)
 
@@ -818,7 +850,7 @@ plot_final_comparison(cls_results, "Classification", ["roc_auc"])
 # 4. **Split datasets:** Split the filtered ESOL and BBBP datasets into training and validation sets using a scaffold split.
 # 5. **Defined Model Architectures:** To keep the code highly modular, the models were built using object-oriented inheritance:
 #    * **The Parent Class (`MolecularGraphNet`):** Handles all shared boilerplate (feature embedding, one-hot encoding, passing data through the GNN, and graph pooling).
-#    * **The Task Children (`MolecularGraphClassification` & `MolecularGraphRegression`):** Inherit the heavy lifting from the parent and only define the final task-specific logic (e.g., loss functions like BCELoss vs MSELoss, and evaluation metrics like ROC-AUC vs Pearson). 
+#    * **The Task Children (`MolecularGraphClassification` & `MolecularGraphRegression`):** Inherit the heavy lifting from the parent and only define the final task-specific logic (e.g., loss functions like BCELoss vs MSELoss, and evaluation metrics like ROC-AUC vs Pearson). For regression (ESOL), target standardization (z-score normalization) is integrated: targets are standardized using training set statistics during training/loss calculation to stabilize gradients, and predictions are reverted back to original units during evaluation to report authentic RMSE and PCC. 
 #
 #    Because the Task classes are separated from the Graph architectures, we can mix-and-match any architecture into any task like Lego bricks. We defined three distinct architectures (the `net` passed to the models) to evaluate how node connections impact performance:
 #    * **DeepSet (Baseline):** Explicitly ignores the graph structure (bypassing the adjacency matrix / `edge_index`), treating the molecule as an unconnected set of atoms. This determines if edges provide meaningful signal beyond raw node features alone.
