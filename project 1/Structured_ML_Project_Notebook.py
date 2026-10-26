@@ -20,53 +20,53 @@ import os
 # # Project 1: Comparing Graph Neural Networks for Molecular Property Prediction
 #
 # ### Goal
-# The goal of this project is to train **Graph Neural Network (GNN) models** that predict 
+# The goal of this project is to train **Graph Neural Network (GNN) models** that predict
 # molecular properties directly from the chemical structure of a molecule, represented as a graph.
 #
-# In chemistry, computing molecular properties from first principles (e.g., using the Boltzmann 
-# distribution $p_M(\mathbf{x}) \propto \exp(-\beta u(\mathbf{x}))$) is extremely expensive 
-# and often completely impractical. The alternative investigated here is to use large volumes 
-# of experimental data together with the natural graph structure of molecules to learn 
+# In chemistry, computing molecular properties from first principles (e.g., using the Boltzmann
+# distribution $p_M(\mathbf{x}) \propto \exp(-\beta u(\mathbf{x}))$) is extremely expensive
+# and often completely impractical. The alternative investigated here is to use large volumes
+# of experimental data together with the natural graph structure of molecules to learn
 # fast, direct predictors of those properties.
 #
 # ### The Two Datasets & Tasks
-# Two molecular benchmark datasets from **MoleculeNet** are used, each representing a 
+# Two molecular benchmark datasets from **MoleculeNet** are used, each representing a
 # different learning task:
 #
-# 1. **ESOL** *(Regression)*: Predicts the **solubility** of a molecule — how strongly it 
-#    thermodynamically favors being dissolved in water over being in a vacuum. Evaluated with 
+# 1. **ESOL** *(Regression)*: Predicts the **solubility** of a molecule — how strongly it
+#    thermodynamically favors being dissolved in water over being in a vacuum. Evaluated with
 #    **MSE** and **Pearson's Correlation Coefficient**.
 #
-# 2. **BBBP** *(Binary Classification)*: Predicts whether a molecule can cross the 
-#    **blood-brain barrier** — a critically important property for developing drugs that 
+# 2. **BBBP** *(Binary Classification)*: Predicts whether a molecule can cross the
+#    **blood-brain barrier** — a critically important property for developing drugs that
 #    target the central nervous system. Evaluated with the **Area Under the ROC Curve (AUC)**.
 #
-# Each molecule is stored as a graph where nodes are atoms (with node features) and edges 
-# represent chemical bonds. Data is split by **chemical scaffold** to avoid models accidentally 
+# Each molecule is stored as a graph where nodes are atoms (with node features) and edges
+# represent chemical bonds. Data is split by **chemical scaffold** to avoid models accidentally
 # overfitting to structurally similar molecules.
 #
 # ### The Three Architectures Compared
-# 1. **DeepSet (Baseline)** — A simple MLP that completely ignores the graph (edge) structure 
-#    of the molecule. It treats the molecule as an unordered bag of atom features. This 
+# 1. **DeepSet (Baseline)** — A simple MLP that completely ignores the graph (edge) structure
+#    of the molecule. It treats the molecule as an unordered bag of atom features. This
 #    establishes the performance floor.
 #
-# 2. **GCN** (Graph Convolutional Network) — Aggregates information from neighboring atoms 
+# 2. **GCN** (Graph Convolutional Network) — Aggregates information from neighboring atoms
 #    by computing a simple weighted average of neighbor features at each message-passing step.
 #
-# 3. **GAT** (Graph Attention Network / Graph Transformer) — An advanced architecture that 
-#    learns to assign different **attention weights** to different neighbors, allowing the model 
+# 3. **GAT** (Graph Attention Network / Graph Transformer) — An advanced architecture that
+#    learns to assign different **attention weights** to different neighbors, allowing the model
 #    to dynamically focus on the most chemically relevant atoms during message passing.
 #
 # ### How It Works
-# - **Node features**: Integer atom features are converted into continuous vectors via 
+# - **Node features**: Integer atom features are converted into continuous vectors via
 #   `torch.nn.Embedding`. Binary features are kept as-is.
-# - **Training**: Each model is trained **3 times with different random seeds** to produce 
+# - **Training**: Each model is trained **3 times with different random seeds** to produce
 #   reliable error estimates.
 # - **Loss**: MSE for regression (ESOL) and Binary Cross-Entropy for classification (BBBP).
 #
 # ### The Central Question
-# Does incorporating the **graph structure** of a molecule improve predictions over ignoring 
-# it (DeepSet)? And between the two graph models, does the **attention mechanism** in GAT 
+# Does incorporating the **graph structure** of a molecule improve predictions over ignoring
+# it (DeepSet)? And between the two graph models, does the **attention mechanism** in GAT
 # give it an edge over the simpler aggregation in GCN?
 
 # %%
@@ -208,10 +208,10 @@ class MolecularGraphNet(torch.nn.Module):
     FEATURE PRE-PROCESSING:
     Neural networks cannot directly process raw categorical integers (like atomic numbers).
     Here, we convert the discrete features into continuous mathematical vectors:
-    
+
     1. Feature 0 (Atomic Number): Mapped to a dense 32-dimensional vector via a learned embedding.
     2. Features 1-8 (Other Atom Properties): Converted into sparse one-hot encoded vectors.
-    3. Concatenation: We glue the 32D embedding and all one-hot vectors together horizontally 
+    3. Concatenation: We glue the 32D embedding and all one-hot vectors together horizontally
        to create the final, continuous feature vector for each atom.
     """
     x = batch.x
@@ -402,6 +402,7 @@ class GAT(torch.nn.Module):
         # Apply final linear layer
         out = self.layers[-1](out)
         return out
+
 
 def plot_results(results, model_name):
     epochs = range(1, len(results['train_loss']) + 1)
@@ -662,7 +663,6 @@ def run_experiment(model_class, model_kwargs, train_ds, val_ds, test_ds, batch_s
 
     return final_metrics_summary
 
-
 # %%
 esol_max_vals = get_max_values(esol)
 
@@ -823,7 +823,7 @@ plot_final_comparison(cls_results, "Classification", ["roc_auc"])
 # 4. **Split datasets:** Split the filtered ESOL and BBBP datasets into training and validation sets using a scaffold split.
 # 5. **Defined Model Architectures:** To keep the code highly modular, the models were built using object-oriented inheritance:
 #    * **The Parent Class (`MolecularGraphNet`):** Handles all shared boilerplate (feature embedding, one-hot encoding, passing data through the GNN, and graph pooling).
-#    * **The Task Children (`MolecularGraphClassification` & `MolecularGraphRegression`):** Inherit the heavy lifting from the parent and only define the final task-specific logic (e.g., loss functions like BCELoss vs MSELoss, and evaluation metrics like ROC-AUC vs Pearson). For regression (ESOL), target standardization (z-score normalization) is integrated: targets are standardized using training set statistics during training/loss calculation to stabilize gradients, and predictions are reverted back to original units during evaluation to report authentic RMSE and PCC. 
+#    * **The Task Children (`MolecularGraphClassification` & `MolecularGraphRegression`):** Inherit the heavy lifting from the parent and only define the final task-specific logic (e.g., loss functions like BCELoss vs MSELoss, and evaluation metrics like ROC-AUC vs Pearson). For regression (ESOL), target standardization (z-score normalization) is integrated: targets are standardized using training set statistics during training/loss calculation to stabilize gradients, and predictions are reverted back to original units during evaluation to report authentic RMSE and PCC.
 #
 #    Because the Task classes are separated from the Graph architectures, we can mix-and-match any architecture into any task like Lego bricks. We defined three distinct architectures (the `net` passed to the models) to evaluate how node connections impact performance:
 #    * **DeepSet (Baseline):** Explicitly ignores the graph structure (bypassing the adjacency matrix / `edge_index`), treating the molecule as an unconnected set of atoms. This determines if edges provide meaningful signal beyond raw node features alone.
@@ -841,20 +841,40 @@ plot_final_comparison(cls_results, "Classification", ["roc_auc"])
 # %% [markdown]
 # ## Model Comparison
 #
-# Below is the comparison of the different models on the ESOL (Regression) and BBBP (Classification) tasks:
+# Below is the evaluation of the different architectures on the **ESOL (Regression)** and **BBBP (Classification)** benchmark tasks:
 #
-# 1. **DeepSet (Baseline)**: This model applies a per-node MLP and then pools the results globally. It does not use the graph structure (edges) at all. It serves as a baseline to see how much can be learned purely from atomic properties without structural context.
-# 2. **GCN (Graph Convolutional Network)**: GCN aggregates features from immediate neighbors using an isotropic weighting scheme based on node degrees. It can capture local structural motifs but struggles to distinguish between neighbors of different importance.
-# 3. **GAT (Graph Attention Network)**: GAT uses an attention mechanism to learn dynamic weights for different neighbors. To maintain a fair and equal parameter count against the GCN baseline, we constrained the model to a single attention head. It theoretically can attend to specific chemical bonds that are most relevant to the target property.
+# ### Final Benchmark Results
 #
-# **Discussion**:
-# Initially, it was hypothesized that GCN and GAT would easily outperform the DeepSet baseline, as molecular properties generally depend heavily on the structural arrangement of atoms (e.g., rings, functional groups). However, our empirical results revealed a more nuanced reality depending on the specific physical domain of the dataset.
+# | Model Architecture | ESOL: Test RMSE ↓ | ESOL: Test PCC ↑ | BBBP: Test ROC-AUC ↑ |
+# | :--- | :---: | :---: | :---: |
+# | **DeepSet (Baseline)** | 1.3416 ± 0.0467 | 0.7747 ± 0.0165 | 0.6763 ± 0.0054 |
+# | **GCN** | 1.4914 ± 0.0789 | 0.7571 ± 0.0080 | 0.7763 ± 0.0126 |
+# | **GAT** | **1.3061 ± 0.0099** | **0.7858 ± 0.0030** | **0.8413 ± 0.0197** |
 #
-# For the **ESOL regression task**, the DeepSet baseline surprisingly outperformed both graph networks. One can assume that because solubility is largely an additive property driven by the atoms within a molecule, identifying atomic features without topological context is highly effective. The graph models likely overcomplicated the problem by attempting to map complex pathways, resulting in slight overfitting and degraded performance.
+# ---
 #
-# Conversely, for the **BBBP classification task**, GCN significantly outperformed DeepSet. One can assume that passing through the blood-brain barrier is a highly selective biological process that demands a specific structural shape and geometry. Merely knowing the atomic composition is not enough and the model must understand the molecular graph connectivity, which allowed the GCN to excel.
+# ### Architecture Descriptions
+# 1. **DeepSet (Baseline)**: Applies an MLP independently to each atom and pools them globally, completely ignoring edge connectivity. It acts as an ablation baseline to quantify how much signal stems purely from atomic composition without graph topology.
+# 2. **GCN (Graph Convolutional Network)**: Aggregates neighbor features using isotropic degree normalization ($\tilde{D}^{-1/2} \tilde{A} \tilde{D}^{-1/2}$). It captures local connectivity motifs but is forced to treat all bonded neighbors equally based solely on their connectivity degree.
+# 3. **GAT (Graph Attention Network)**: Employs a self-attention mechanism to learn dynamic, anisotropic weights across edges. To maintain a fair parameter count against GCN, we used a single attention head ($heads=1$). This allows the network to selectively attend to chemically vital bonds (e.g., polar functional groups) over passive carbon backbones.
 #
-# Finally, when comparing the two graph architectures, GCN outperformed GAT. While GAT's attention mechanism is theoretically more expressive, one can assume that attention networks are highly data-hungry. Because the subsets of the MoleculeNet datasets used here are relatively tiny, the GAT struggled to learn meaningful, dynamic attention weights. In contrast, the GCN's fixed, mathematically normalized averaging rule proved to be a much more robust and reliable inductive bias for small datasets.
+# ---
+#
+# ### Discussion
+#
+# Our empirical results reveal clear patterns regarding the role of molecular topology and attention mechanisms across different chemical tasks:
+#
+# #### 1. GAT Achieves Superior Performance Across Both Domains
+# The **Graph Attention Network (GAT)** was the top-performing model on both benchmarks, achieving the lowest error on ESOL (RMSE 1.3061, PCC 0.7858) and the highest predictive power on BBBP (ROC-AUC 0.8413). In chemistry, bonds are not created equal: a polar hydrogen-bonding group or aromatic ring exerts a far stronger influence on chemical behavior than aliphatic carbon single bonds. By learning dynamic attention coefficients, GAT successfully focuses on key pharmacophoric bonds while downweighting uninformative neighbors.
+#
+# #### 2. The ESOL Regression Nuance: GAT > DeepSet > GCN
+# On the ESOL solubility task, **DeepSet outperformed GCN** (RMSE 1.3416 vs. 1.4914). Aqueous solubility is largely driven by additive atomic properties (such as polar surface area, molecular weight, and hydrophobicity).
+# * GCN’s rigid, isotropic averaging mechanism dilutes the distinct signal of key polar atoms (like oxygens or nitrogens) by blending them uniformly with neighboring carbons—a well-known limitation related to oversmoothing.
+# * DeepSet avoids this feature dilution by preserving pure atomic identities.
+# * GAT, however, avoids the oversmoothing penalty of GCN by learning to route messages selectively, allowing it to capture structural synergies without muddying the features of critical solubility-determining atoms.
+#
+# #### 3. BBBP Classification: Graph Topology is Essential
+# For the blood-brain barrier task, both graph architectures decisively outperformed the DeepSet baseline (GAT 0.8413 and GCN 0.7763 vs. DeepSet 0.6763). Passing through the blood-brain barrier is a strict bio-structural filtering process governed by overall molecular shape, charge distribution, and ring-system geometry. A simple "bag of atoms" approach (DeepSet) fails to capture whether polar atoms are exposed on the molecular surface or buried inside the scaffold, proving that graph connectivity is an indispensable inductive bias for biological transport tasks.
 
 # %% [markdown]
 # ### Analysis of Training vs. Validation Metrics
