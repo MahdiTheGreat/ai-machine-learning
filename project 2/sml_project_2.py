@@ -9,6 +9,9 @@ import sys
 import os
 
 # %% [markdown]
+# [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MahdiTheGreat/Structured-machine-learning/blob/main/project%202/sml_project_2.ipynb)
+
+# %% [markdown]
 # # Usage of AI
 #
 # AI was mainly used to formalize my own arguments and reformat them so that they read better. It was also used to generate latex formulas and for research and to brush up on some previously learned topics.
@@ -17,62 +20,82 @@ import os
 # # Project 2: Equivariant Regression — Learning Potential Energy Models from Examples
 #
 # ### Goal
-# The goal of this project is to build a **Machine-Learned Force Field (MLFF)**: a neural 
-# network that predicts the **potential energy** $u(\mathbf{x}) : \mathbb{R}^{3N} \to \mathbb{R}$ 
+# The goal of this project is to build a **Machine-Learned Force Field (MLFF)**: a neural
+# network that predicts the **potential energy** $u(\mathbf{x}) : \mathbb{R}^{3N} \to \mathbb{R}$
 # of a molecule directly from the 3D positions of its $N$ atoms.
 #
-# Computing molecular potential energies from first principles (e.g., quantum chemistry) is 
-# extremely expensive. The core idea here is to learn a fast neural network surrogate $u_\theta$ 
+# Computing molecular potential energies from first principles (e.g., quantum chemistry) is
+# extremely expensive. The core idea here is to learn a fast neural network surrogate $u_\theta$
 # from training examples $(\mathbf{x}_i, u_i)$ by minimizing a simple least squares loss:
 #
 # $$\mathcal{L}(\theta) = \sum_{i=1}^{N_\text{train}} (u_\theta(\mathbf{x}_i) - u_i)^2$$
 #
 # ### The Key Research Question
-# Does using **G-equivariant hidden features** inside the neural network improve its 
+# Does using **G-equivariant hidden features** inside the neural network improve its
 # ability to predict **G-invariant** target values (the potential energy)?
 #
-# The potential energy $u(\mathbf{x})$ is **E(3) invariant** — it doesn't change if you 
-# rotate, reflect, or translate the molecule. A standard MLP completely ignores this physical 
-# fact. An equivariant GNN, by contrast, is architecturally *forced* to respect these symmetries, 
+# The potential energy $u(\mathbf{x})$ is **E(3) invariant** — it doesn't change if you
+# rotate, reflect, or translate the molecule. A standard MLP completely ignores this physical
+# fact. An equivariant GNN, by contrast, is architecturally *forced* to respect these symmetries,
 # which should make it far more data-efficient and accurate.
 #
 # ### Dataset
-# We use the **MD17 dataset**, a benchmark set of molecular dynamics trajectories. 
-# Specifically, the **Ethanol CCSD(T)** subset is used, providing pairs of 3D coordinates and 
-# their high-accuracy quantum mechanical energies. Training is done on a maximum of **900 
+# We use the **MD17 dataset**, a benchmark set of molecular dynamics trajectories.
+# Specifically, the **Ethanol CCSD(T)** subset is used, providing pairs of 3D coordinates and
+# their high-accuracy quantum mechanical energies. Training is done on a maximum of **900
 # examples**, with 50 held out for validation and testing.
 #
 # ### The Two Models Compared
-# 1. **Baseline (Invariant)** — Uses only $l_\text{max} = 0$ features (scalars). It captures 
-#    distances between atoms but has no awareness of directionality or 3D geometry.
-# 2. **Equivariant Model** — Uses $l_\text{max} > 0$ features (vectors, tensors). The model 
-#    processes the full 3D geometric structure of the molecule, encoding both distances 
-#    and orientations between atoms via **spherical harmonics** and **Clebsch-Gordan tensor products**.
 #
-# Both models are built using the `MessagePassing` class from the **e3nn** library, 
-# which handles the complex tensor product operations under the hood.
+# 1. **Baseline (Invariant)** — Uses only $l_\text{max} = 0$ features (scalars). It processes interatomic distances and atom types, but has no awareness of 3D directionality, bond angles, or spatial orientation.
+# 2. **Equivariant Model** — Uses $l_\text{max} > 0$ features (vectors, tensors) to capture the full 3D geometry by cleanly separating distance and orientation:
+#    * **Distance Magnitude via Radial Basis Functions (RBF):** Interatomic distances are expanded using smooth radial basis functions (`soft_one_hot_linspace`). This maps the 1D scalar distance into multiple overlapping basis bins, providing the network with independent parameters to learn steep, non-linear physical potentials without breaking rotation invariance.
+#    * **Direction & Orientation via Spherical Harmonics ($Y_{lm}$):** Encodes the angular direction (unit vectors) between atoms, capturing 3D spatial alignment and multi-body bond angles.
+#    * **Geometric Representations ($l=1$ vs. $l=2$):** Higher-order spherical harmonic degrees allow the network to model distinct physical and geometric behaviors:
+#      * **$l = 1$ (Vectors, dimension $2l+1 = 3$):** Represents standard 3D directional arrows $(x, y, z)$. It encodes directional physical quantities such as forces and velocities bond vectors pointing from one atom to another.
+#      * **$l = 2$ (Rank-2 Traceless Symmetric Tensors, dimension $2l+1 = 5$):** Represents 5 independent components. While $l=1$ captures a single direction with an "arrowhead", $l=2$ captures quadrupoles, anisotropic stretch, shearing, and elliptical deformations—allowing the network to understand complex multi-body bond angles.
+#    * **Feature Interaction via Clebsch-Gordan (CG) Tensor Products:** Standard neural network layers break equivariance when multiplying vectors. Clebsch-Gordan tensor products act as the mathematically rigorous "multiplication operator" for geometric features, combining RBF distance weights, directional spherical harmonics, and node tensors into valid irreducible representations (e.g., combining two $l=1$ vectors produces an $l=0$ scalar via dot product, an $l=1$ vector via cross product, and an $l=2$ tensor) while strictly preserving $E(3)$ rotation and translation equivariance.
+#
+# Both models are built using the `MessagePassing` class from the **e3nn** library, which orchestrates these RBF expansions, spherical harmonics, and Clebsch-Gordan tensor products under the hood.
 #
 # ### How It Works
-# The pipeline has four key steps:
-# 1. **Graph Construction**: The atom point cloud is converted into a **complete graph** (connecting all atom pairs, excluding self-loops). We use a complete graph rather than a sparse covalent graph because:
-#    - **Physics of Force Fields**: Molecular potential energy and atomic forces ($\mathbf{F} = -\nabla u$) depend not only on covalent bonds, but on non-bonded all-to-all interactions (electrostatic forces, van der Waals dispersion, and steric Pauli repulsion) across all atom pairs.
-#    - **Small Molecular Scale**: Ethanol ($C_2H_6O$) contains only 9 atoms ($9 \times 8 = 72$ directed edges), making all-to-all message passing computationally trivial. Moreover, since all atoms stay within $\sim 4.0\text{ \AA}$ of each other, applying a spatial cutoff would either be redundant or create unphysical discontinuities and force spikes whenever vibrating atoms cross the cutoff threshold.
-#    - **Continuous Distance Weighting**: The complete graph provides the universal connectivity canvas, while continuous Radial Basis Functions (RBFs) dynamically scale the physical interaction strengths based on true 3D Euclidean distances.
-# 2. **Edge Features**: Each edge is described by two components:
-#    - **Orientation** (direction): Encoded via **spherical harmonics** on the edge vector.
-#    - **Distance** (norm): Encoded via `soft_one_hot_linspace` mapping onto invariant components.
-# 3. **Message Passing**: The `MessagePassing` class aggregates information from neighboring 
-#    atoms iteratively using these features to build rich node representations.
-# 4. **Readout**: The final node features are summed across the graph to produce a single 
-#    scalar energy prediction for the whole molecule.
+# The pipeline has five key steps:
+#
+# 1. **Target Preprocessing & Standardization Strategy**: Raw quantum calculations in MD17 yield massive baseline potential energies ($\sim -120,000\text{ kcal/mol}$) with subtle conformational variations ($\sim 1\text{--}5\text{ kcal/mol}$). We apply an additive shift by subtracting the ground-state reference energy ($E - E_0$):
+#    - **Numerical Stability**: Centers energy targets around $[0, 10]\text{ kcal/mol}$, placing values in an optimal numerical range for stable backpropagation without floating-point precision loss.
+#    - **Why Explicit Standardization (Dividing by $\sigma$) is Omitted**:
+#      - *Physical Derivative Consistency*: Because forces are spatial derivatives ($\mathbf{F} = -\nabla_{\mathbf{r}} E$), dividing energy by $\sigma$ would scale autograd forces down by $1/\sigma$ ($-\nabla_{\mathbf{r}} \tilde{E} = \frac{1}{\sigma}\mathbf{F}$). Omitting division preserves exact physical units ($\text{kcal/mol}$ and $\text{kcal}/(\text{mol} \cdot \text{\AA})$) directly with zero risk of rescaling bugs.
+#      - *Implicit Scaling via Loss Weights*: The multi-task energy weight ($0.01\text{--}0.05$) mathematically acts as an error divisor: $0.01 (E - \hat{E})^2 = \big(\frac{E - \hat{E}}{10}\big)^2$. This already scales energy gradients down more than dividing by ethanol’s natural variance ($\sigma \approx 2\text{--}3\text{ kcal/mol}$).
+#      - *Optimizer Scale Invariance*: The Adam optimizer (`lr=0.005`) divides gradient steps by the running second moment ($\sqrt{v_t}$), making parameter updates inherently scale-invariant to constant multipliers, while `ReduceLROnPlateau` smoothly throttles step sizes as training converges.
+#
+# 2. **Graph Construction**: The atom point cloud is converted into a **complete graph** (connecting all atom pairs, excluding self-loops). We use a complete graph rather than a sparse covalent graph because:
+#    - **Physics of Force Fields**: Molecular potential energy and atomic forces ($\mathbf{F} = -\nabla u$) depend not only on covalent bonds, but on non-bonded all-to-all interactions across all atom pairs.
+#    - **Small Molecular Scale**: Ethanol ($C_2H_6O$) contains only 9 atoms ($9 \times 8 = 72$ directed edges), making all-to-all message passing computationally trivial.
+#
+# 3. **Edge Features**: Each edge is described by two components:
+#    - **Orientation** (direction): Encoded via **spherical harmonics** $Y_l^m(\hat{\mathbf{r}}_{ij})$ on the unit edge vector $\hat{\mathbf{r}}_{ij} = \frac{\mathbf{r}_j - \mathbf{r}_i}{\|\mathbf{r}_j - \mathbf{r}_i\|}$ to capture 3D angular orientations.
+#    - **Distance** (norm): Encoded via `soft_one_hot_linspace` by projecting the scalar Euclidean distance $r_{ij} = \|\mathbf{r}_j - \mathbf{r}_i\|$ into a 10-dimensional vector of smooth cosine basis functions:
+#
+#      $$\mathbf{e}_{ij}^{\text{radial}} = \big[ \phi_1(r_{ij}), \, \phi_2(r_{ij}), \, \dots, \, \phi_{10}(r_{ij}) \big]^T$$
+#
+#      Instead of a raw 1D scalar (which restricts a linear layer to a single straight-line response $w \cdot r_{ij} + b$), this expansion allows the network to compute a flexible linear combination over distance regions:
+#
+#      $$h(r_{ij}) = \sum_{k=1}^{10} w_k \phi_k(r_{ij}) + b$$
+#
+#      This provides 10 independent learnable parameters to easily fit complex non-linear physics while remaining strictly differentiable for force calculation ($\mathbf{F}_i = -\nabla_{\mathbf{r}_i} u$).
+#
+# 4. **Message Passing**: The `MessagePassing` class aggregates information from neighboring atoms iteratively using these features to build rich node representations.
+#
+# 5. **Readout**: The final node features are summed across the graph to produce a single scalar energy prediction for the whole molecule.
+#
 #
 # ### Evaluation
 # Models are evaluated on:
 # - **Energy prediction**: Mean Squared Error (MSE) on the held-out test set.
-# - **Force prediction**: Since force is $\mathbf{F} = -\nabla_\mathbf{x} u(\mathbf{x})$, 
-#   we use `torch.autograd` to differentiate the predicted energy w.r.t. atom positions and 
+# - **Force prediction**: Since force is $\mathbf{F} = -\nabla_\mathbf{x} u(\mathbf{x})$,
+#   we use `torch.autograd` to differentiate the predicted energy w.r.t. atom positions and
 #   compare against the true forces using **MSD** and **RMSD** metrics.
-# - **Data efficiency**: All models are also retrained on **half the training data** to test 
+# - **Data efficiency**: All models are also retrained on **half the training data** to test
 #   how well each architecture generalizes with fewer examples.
 
 # %%
@@ -97,12 +120,6 @@ except ImportError:
 
 # %%
 import os
-import sys
-
-for p in ['project 2', '.', 'sml_project2']:
-    if os.path.exists(p) and os.path.abspath(p) not in sys.path:
-        sys.path.insert(0, os.path.abspath(p))
-
 import random
 import e3nn
 from e3nn import o3
@@ -145,7 +162,6 @@ def get_test_batch(batch_size=2, n_atoms=9):
 test_batch = get_test_batch()
 print(test_batch)
 
-# %%
 # DATA EXPLORATION: Read and Inspect an Actual Batch from MD17
 
 def inspect_batch(batch, title="Batch"):
@@ -194,7 +210,7 @@ def get_real_batch(batch_size=2):
     ethanol_ds = data.get_dataset('ethanol')
     return geom.data.Batch.from_data_list([ethanol_ds[i] for i in range(batch_size)])
 
-# Read and inspect an actual batch of real data
+# Read and inspect an actual batch of real data from MD17
 real_batch = get_real_batch(batch_size=2)
 inspect_batch(real_batch, title="Actual Ethanol Batch (MD17)")
 
@@ -220,11 +236,15 @@ inspect_batch(real_batch, title="Actual Ethanol Batch (MD17)")
 #
 # ### 1. Information Extracted from the Dataset
 #
-# To perform the forward pass, our custom classes extract minimal information from the PyTorch Geometric dataset batch:
+# To perform the forward pass, our custom classes extract the following core attributes from each PyTorch Geometric dataset batch:
 #
-# * **`pos`**: The $(x,y,z)$ coordinates of the atoms.
-# * **`batch`**: The index mapping to determine which atoms belong to which molecule graph.
-# * *(Note: The atom types, `z`, are actively ignored because MD17 simulates a single molecule, rendering atom types static. `energy` and `force` are only extracted later for loss calculation, not for the forward pass).*
+# * **`pos`**: The 3D $(x, y, z)$ Euclidean coordinates of all atoms, used to calculate relative edge vectors ($\vec{r}_{ij}$), radial distances for the RBF expansion, and spherical harmonics.
+# * **`z`**: The atomic numbers (1 for H, 6 for C, 8 for O). These are mapped and one-hot encoded into 3-dimensional invariant scalar vectors (`3x0e`) representing the chemical identity of each atom. This one-hot tensor is assigned to both:
+#   * **`node_features`**: The dynamic input state that evolves and gets mixed across neighbors at every message-passing layer.
+#   * **`node_attr` (`node_attr = node_features`)**: Unlike `node_features`, `node_attr` is never updated or blurred by message passing. While the assignment hint noted that node attributes could simply be set to 1, copying the static one-hot encodings into `node_attr` fulfills `e3nn`'s mandatory argument requirement while providing deeper convolutional layers with an unblurred, permanent chemical memory (e.g., distinguishing C–O bonds from C–H bonds) at zero computational overhead.
+# * **`batch`**: The graph assignment indices that map each atom to its corresponding molecule in the batch, essential for isolating per-molecule complete graphs and global pooling.
+#
+# *(Note: Target properties `energy` and `force` are ground-truth labels used strictly for loss evaluation and metrics; they are never passed into the model during the forward pass).*
 #
 # ### 2. Class Architectures and Stored Attributes
 #
@@ -254,9 +274,6 @@ inspect_batch(real_batch, title="Actual Ethanol Batch (MD17)")
 #    * **Output**: The predicted `force` tensor (Calculated via the mathematical derivative $F = -\nabla_x u(x)$).
 
 # %%
-# MODEL: Setup the MLFF baseclass
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-
 # MODEL: Setup the MLFF baseclass
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 class MLFF(torch.nn.Module):
@@ -291,9 +308,9 @@ class MLFF(torch.nn.Module):
   def get_force(self, batch, energy):
 
     """
-    Force = -∇u(x). 
+    Force = -∇u(x).
 
-    torch.autograd.grad() rewinds that graph and asks: "if I nudge each atom's x,y,z by a tiny 
+    torch.autograd.grad() rewinds that graph and asks: "if I nudge each atom's x,y,z by a tiny
     amount, how much does the energy change?" This gives ∂u/∂x for every atom — exact calculus.
 
     Args:
@@ -323,27 +340,27 @@ class Baseline(torch.nn.Module):
     self.r_max = r_max
 
 # GENERAL PARAMETER EXPLANATIONS (Applies to all configs)
-# irreps_node_input:  Input feature type for each node (atom). "3x0e" means 
+# irreps_node_input:  Input feature type for each node (atom). "3x0e" means
 #                     3 invariant scalars (one-hot encoding for H, C, O).
-# irreps_node_hidden: The shape of the network's internal memory/features. 
+# irreps_node_hidden: The shape of the network's internal memory/features.
 #                     Dictates how complex the 3D geometry it can "remember" is.
-# irreps_node_output: The final output of the network. "1x0e" means 1 invariant 
-#                     scalar, which makes sense since we are predicting Potential 
+# irreps_node_output: The final output of the network. "1x0e" means 1 invariant
+#                     scalar, which makes sense since we are predicting Potential
 #                     Energy (which doesn't change if you rotate the molecule).
-# irreps_node_attr:   Attributes for nodes. "3x0e" matches the 3-class one-hot atom type 
+# irreps_node_attr:   Attributes for nodes. "3x0e" matches the 3-class one-hot atom type
 #                     features for each node.
-# irreps_edge_attr:   Geometric edge features (Spherical Harmonics). This tells 
+# irreps_edge_attr:   Geometric edge features (Spherical Harmonics). This tells
 #                     the network the spatial direction from Atom A to Atom B.
-# layers:             Number of message-passing steps (graph convolutions). 
+# layers:             Number of message-passing steps (graph convolutions).
 #                     layers=3 means a 3-hop neighborhood radius for information.
-# fc_neurons:         The MLP architecture that processes the radial distances 
-#                     between atoms. [10, 32] means it takes 10 distance bases 
+# fc_neurons:         The MLP architecture that processes the radial distances
+#                     between atoms. [10, 32] means it takes 10 distance bases
 #                     and outputs a 32-dim hidden vector to weight the messages.
-# num_neighbors:      Estimated average degree of the graph. e3nn uses this to 
-#                     normalize message aggregation (divides by sqrt(10.0)) to 
+# num_neighbors:      Estimated average degree of the graph. e3nn uses this to
+#                     normalize message aggregation (divides by sqrt(10.0)) to
 #                     keep mathematical variance stable during training.
 # Invariant features only (lmax=0)
-    
+
     #this is where the local pooling is done.
     self.mp = e3nn.nn.models.v2103.gate_points_message_passing.MessagePassing(
         irreps_node_input="3x0e",
@@ -359,7 +376,7 @@ class Baseline(torch.nn.Module):
         # - Layer 1: Atom looks at direct neighbors (1-hop radius).
         # - Layer 2: Atom receives data from neighbors' neighbors (2-hop radius).
         # - Layer 3: Atom receives data from 3 hops away.
-        # Setting layers=3 defines the "receptive field", meaning the network uses the 
+        # Setting layers=3 defines the "receptive field", meaning the network uses the
         # local geometry of everything within a 3-bond radius to predict energy.
         # - Layer 3: Captures 4-body interactions (torsion/dihedral angles between 4).
 
@@ -402,17 +419,17 @@ class Baseline(torch.nn.Module):
     # 2a. Edge Scalars (Distances)
     # We embed the raw scalar distance between atoms into a 10-dimensional vector
     # using a Cosine Radial Basis Function (RBF).
-    # Neural networks struggle to learn complex non-linear physics (like atomic 
-    # repulsion/attraction) from a single raw scalar distance (e.g., r = 1.2).
-    # RBF takes that single scalar and "smears" it across multiple overlapping 
-    # curves (e.g., 10 curves). This converts the distance into a 10-dimensional 
-    # "barcode", making it much easier for the MLP to apply drastically different 
+    # Neural networks struggle to learn complex non-linear physics
+    # rom a single raw scalar distance (e.g., r = 1.2).
+    # RBF takes that single scalar and "smears" it across multiple overlapping
+    # curves (e.g., 10 curves). This converts the distance into a 10-dimensional
+    # "barcode", making it much easier for the MLP to apply drastically different
     # weights to different distance ranges (short-range vs long-range physics).
-    
+
     # - start: The minimum distance you expect between atoms e.g. 0.0
-    # - end:   The maximum cutoff distance (e.g., 5.0 Å). Curves stop being placed 
-    # - cutoff: If True, it ensures the final curves smoothly taper to exactly 0 at 
-    #           the 'end' boundary, preventing harsh mathematical discontinuities 
+    # - end:   The maximum cutoff distance (e.g., 5.0 Å). Curves stop being placed
+    # - cutoff: If True, it ensures the final curves smoothly taper to exactly 0 at
+    #           the 'end' boundary, preventing harsh mathematical discontinuities
     #           when atoms enter/leave the neighborhood radius.
     edge_scalars = e3nn.math.soft_one_hot_linspace(
         edge_length,
@@ -430,35 +447,35 @@ class Baseline(torch.nn.Module):
     node_outputs = self.mp(node_features, node_attr, edge_src, edge_dst, edge_attr, edge_scalars)
 
     # scatter is the workhorse engine of the "Message Passing" aggregation step.
-    # THE PROBLEM: You have thousands of edges in your molecule, and you've computed 
-    # a "message" for each edge. Now, Atom 0 needs to sum up the 4 messages coming 
-    # to it, Atom 1 needs to sum its 3 messages, etc. Since atoms have different 
+    # THE PROBLEM: You have thousands of edges in your molecule, and you've computed
+    # a "message" for each edge. Now, Atom 0 needs to sum up the 4 messages coming
+    # to it, Atom 1 needs to sum its 3 messages, etc. Since atoms have different
     # numbers of neighbors, you can't use standard matrix multiplication.
     #
-    # scatter takes a list of values (messages) and a list of 
-    # target indices (destination atoms). It groups all values that share the same 
+    # scatter takes a list of values (messages) and a list of
+    # target indices (destination atoms). It groups all values that share the same
     # index and aggregates them (usually by summing).
     #
     # Example conceptually:
     # messages = [msg1, msg2, msg3, msg4]
-    # dest_idx = [  0,    1,    0,    1 ] 
-    # scatter(messages, dest_idx, reduce='sum') 
+    # dest_idx = [  0,    1,    0,    1 ]
+    # scatter(messages, dest_idx, reduce='sum')
     # -> Output: [ (msg1 + msg3), (msg2 + msg4) ] (Node 0's sum, Node 1's sum)
 
     #this is where the global pooling is done, after calculating the energy
     #for every atom.
 
-    # molecules have varying numbers of atoms. You can't cleanly stack them into a standard 
+    # molecules have varying numbers of atoms. You can't cleanly stack them into a standard
     # tensor like shape=[batch_size, num_atoms, features].
     #
-    # PyTorch Geometric's clever solution is to merge all molecules in the batch 
-    # into one giant "Super-Graph" that is totally disconnected from itself. 
-    # 
-    # If you just ran `scatter(node_energies, reduce="sum")` blindly, it would sum 
-    # up the energies of ALL the atoms across ALL 32 molecules in your batch into a 
+    # PyTorch Geometric's clever solution is to merge all molecules in the batch
+    # into one giant "Super-Graph" that is totally disconnected from itself.
+    #
+    # If you just ran `scatter(node_energies, reduce="sum")` blindly, it would sum
+    # up the energies of ALL the atoms across ALL 32 molecules in your batch into a
     # single, massive, useless number.
     #
-    # `batch.batch` is an assignment vector (an index array) created by PyTorch 
+    # `batch.batch` is an assignment vector (an index array) created by PyTorch
     energy = scatter(node_outputs, batch.batch, dim=0, reduce="sum")
     return energy
 
@@ -471,8 +488,8 @@ class E3MPNN(Baseline):
 
     # Equivariant features (lmax>0)
     # FIRST-ORDER EQUIVARIANT (Vectors)
-    # Adds 1o (true 3D vectors) to hidden states, and uses spherical 
-    # harmonics up to l=1. The network can now internally track directions and 
+    # Adds 1o (true 3D vectors) to hidden states, and uses spherical
+    # harmonics up to l=1. The network can now internally track directions and
     # bond angles (like forces or displacements), drastically improving accuracy.
     # Memory: 16 scalars + 8 true 3D vectors.
 
@@ -494,9 +511,9 @@ class E3MPNN_L2(Baseline):
         super().__init__(r_min=r_min, r_max=r_max, *args, **kwargs)
 
         # CONFIG 3: SECOND-ORDER EQUIVARIANT (Tensors)
-        # Difference: Adds "2e" (2nd-order tensors) to hidden states, and spherical 
-        # harmonics up to l=2. This allows the network to reason about highly complex 
-        # torsion angles, d-orbital shapes, and multi-directional cross-dependencies. 
+        # Difference: Adds "2e" (2nd-order tensors) to hidden states, and spherical
+        # harmonics up to l=2. This allows the network to reason about highly complex
+        # torsion angles, d-orbital shapes, and multi-directional cross-dependencies.
         # Usually yields the highest accuracy, but requires more compute.
         # Memory: 16 scalars + 8 3D vectors + 8 2nd-order tensors.
 
@@ -565,15 +582,34 @@ def train_eval_model(model, name, train_dl, val_dl, test_dl, epochs=None):
 
             loss_e = model.loss_fn(batch.energy, energy)
             loss_f = model.loss_fn(batch.force, force)
-            # We train on both energy AND forces simultaneously (multi-task learning).
-            # Forces dominate (99%) for two reasons:
-            # More signal: a molecule with N atoms gives 1 energy value but 3N force values.
-            # For ethanol (9 atoms), that's 1 vs 27 numbers per sample.
-            # Scale mismatch: energy and forces have different units and magnitudes.
-            # Without weighting, whichever is numerically larger would dominate the gradients.
-            # This 0.01/0.99 split is standard practice in MLFF literature (e.g. the MD17 paper).
-
-            loss = 0.01 * loss_e + 0.99 * loss_f
+            # ==============================================================================
+            # Multi-Task Loss Weighting (0.05 Energy / 0.95 Force):
+            # Follows the PaiNN MD17 benchmark formulation (Schütt et al., ICML 2021):
+            #   loss = (1 - rho) * loss_e + rho * loss_f, with rho = 0.95
+            #
+            # 1. Why Forces Dominate (95%):
+            #    - Magnitude Mismatch: Squared energy errors ((kcal/mol)^2) are naturally 10x to 100x
+            #      larger in raw value than per-atom force errors ((kcal/(mol*Å))^2). Without
+            #      weighting, energy loss gradients overwhelmingly drown out the force signals.
+            #    - 1st- vs 2nd-Order Optimization: Energy is a direct network output (1st-order
+            #      gradients), while forces are spatial derivatives F = -dE/dx (requiring 2nd-order
+            #      Hessian-vector gradients). Without a high force weight, the optimizer takes the
+            #      "path of least resistance"—memorizing the 1 scalar height while ignoring the
+            #      delicate 3D directional slopes.
+            #    - Information Density: In ethanol (9 atoms), each sample provides 27 Cartesian
+            #      force components (3D vectors per atom) vs only 1 scalar energy value.
+            #
+            # 2. Why Energy is Retained (5%):
+            #    - Forces only constrain slopes (F = -dE/dx). Because the spatial derivative of a
+            #      constant is zero, training purely on forces leaves the integration constant (C)
+            #      undefined, causing global energy predictions to drift arbitrarily. The 5% energy
+            #      weight pins the baseline, ensuring low Energy RMSD across conformational basins.
+            #
+            # Reference:
+            # - Schütt, Unke, & Gastegger, "Equivariant message passing for the prediction of
+            #   tensorial properties and molecular spectra," ICML 2021 (PaiNN).
+            # ==============================================================================
+            loss = 0.05 * loss_e + 0.95 * loss_f
 
             model.training_step(loss)
             train_loss += loss.item()
@@ -792,11 +828,8 @@ e3mpnn_l2_model_half = MLFF(E3MPNN_L2(r_min=r_start, r_max=r_end))
 train_eval_model(e3mpnn_l2_model_half, "E3MPNN_L2 (lmax=2) [HALF DATA]", half_train_dataloader, val_dataloader, geom.loader.DataLoader(test_dataset, batch_size=val_batch_size))
 
 # %%
-try:
-    from google.colab import output
-    output.enable_custom_widget_manager()
-except (ImportError, ModuleNotFoundError):
-    pass
+from google.colab import output
+output.enable_custom_widget_manager()
 
 # This can code can help you render a molecule - it wont work in colab as
 # colab doesn't allow for third party widgets
@@ -915,23 +948,35 @@ except Exception as e:
 # %% [markdown]
 # ## 3. Final Results and Analysis
 #
-# Based on our completed training runs, we gathered the following RMSD metrics on the unseen test set:
+# Based on our completed training runs on the unseen test set, we gathered the following RMSD metrics (reported in $\text{kcal/mol}$ for energy and $\text{kcal}/(\text{mol} \cdot \text{\AA})$ for forces):
 #
-# | Model Architecture           | Parameters | Energy RMSD (Full)       | Force RMSD (Full)        | Energy RMSD (Half)       | Force RMSD (Half)        |
-# | :--------------------------- | :--------- | :----------------------- | :----------------------- | :----------------------- | :----------------------- |
-# | **Baseline (lmax=0)**  | 4,754      | 1.4693 ± 0.73           | 4.0370 ± 5.12           | 1.2537 ± 0.74           | 5.0243 ± 5.95           |
-# | **E3MPNN (lmax=1)**    | 8,746      | 0.5760 ± 0.34           | 1.8699 ± 1.70           | 0.8608 ± 0.54           | 3.1232 ± 3.06           |
-# | **E3MPNN_L2 (lmax=2)** | 15,554     | **0.2073 ± 0.13** | **1.1572 ± 1.07** | **0.6332 ± 0.33** | **1.8382 ± 1.83** |
+# | Model Architecture           | Parameters | Energy RMSD (Full)         | Force RMSD (Full)          | Energy RMSD (Half)         | Force RMSD (Half)          |
+# | :--------------------------- | :--------- | :------------------------- | :------------------------- | :------------------------- | :------------------------- |
+# | **Baseline ($l_\text{max}=0$)**  | 4,754      | 0.5378 ± 0.3500           | 1.4324 ± 1.2502           | 0.7323 ± 0.4411           | 1.8853 ± 1.7746           |
+# | **E3MPNN ($l_\text{max}=1$)**    | 8,746      | 0.2385 ± 0.1549           | 0.8330 ± 0.7708           | 0.2710 ± 0.1709           | 1.2746 ± 1.2506           |
+# | **E3MPNN_L2 ($l_\text{max}=2$)** | 15,554     | **0.1488 ± 0.0676**       | **0.4575 ± 0.5047**       | **0.1581 ± 0.0835**       | **0.8019 ± 0.9173**       |
 #
-# ### The Effect of Neural Network Complexity ($l_{max}$)
+# ---
 #
-# The results perfectly illustrate the extreme power of Equivariant geometric features for modeling physical systems:
+# ### The Effect of Neural Network Complexity ($l_{\text{max}}$)
 #
-# * **The Equivariance Advantage:** Pushing from $l_{max}=0$ (invariant scalars) to $l_{max}=1$ (vectors) caused the Force RMSD to plummet from 4.03 to 1.87. This proves our earlier hypothesis: allowing the model to pass directional vector messages allows it to natively map how atoms pull on each other in 3D space, yielding an energy surface with far more physically accurate force derivatives.
-# * **The Tensor Advantage ($l_{max}=2$):** Pushing the equivariance even higher to $l_{max}=2$ (Tensors) resulted in the absolute best performance across the board (Energy RMSD 0.20, Force RMSD 1.15). Unlike simple linear networks that might overfit when parameter counts triple (from 4.7k to 15.5k), the $l=2$ model uses these parameters for mathematically rigid Clebsch-Gordan tensor products. This strong geometric inductive bias allows it to learn the complex curvature of the potential energy surface almost perfectly without overfitting.
+# The results provide undeniable empirical proof of the power of equivariant geometric representations for molecular potential energy surfaces:
 #
-# ### The Effect of Training Set Size
+# * **The Vector Equivariance Advantage ($l_{\text{max}}=1$):**  
+#   Moving from invariant scalars ($l_{\text{max}}=0$) to first-order vectors ($l_{\text{max}}=1$) cuts the Full-Data Energy RMSD by **56%** ($0.5378 \to 0.2385\text{ kcal/mol}$) and the Force RMSD by **42%** ($1.4324 \to 0.8330\text{ kcal}/(\text{mol} \cdot \text{\AA})$). Because forces are directional vectors ($\mathbf{F} = -\nabla E$), an invariant model that only passes scalar distances is forced to guess directional derivatives blindly. In contrast, passing directional vector features allows the network to natively model directional bond strains and atomic pulls.
+# * **The Tensor Advantage ($l_{\text{max}}=2$):**  
+#   Incorporating rank-2 tensors ($l_{\text{max}}=2$) produces the absolute highest accuracy across all metrics, achieving an exceptional **Energy RMSD of $0.1488\text{ kcal/mol}$** and **Force RMSD of $0.4575\text{ kcal}/(\text{mol} \cdot \text{\AA})$**—well within the coveted threshold of chemical accuracy ($< 1.0\text{ kcal/mol}$). Even though the parameter count increases to 15.5k, the network does not overfit; rather, the mathematically rigid Clebsch-Gordan tensor products provide the exact geometric inductive bias needed to resolve complex quadrupolar interactions, dihedral torsions, and non-linear potential curvature.
 #
-# Training on only 450 examples (Half Data) predictably degraded performance across all models, but highlighted the robustness of higher-order equivariance.
-# For example, the simple Baseline model's Force RMSD degraded to 5.02 on half data. In contrast, the `E3MPNN_L2` model trained on *half* the data still achieved a Force RMSD of 1.83—which is significantly better than what the Baseline model achieved on the *full* dataset! This demonstrates that highly expressive geometric features (tensors up to $l=2$) provide such a strong mathematical inductive bias that they can extract vastly more physical truth from extremely limited datasets than invariant models can extract from large ones.
+# ---
+#
+# ### The Effect of Training Set Size (Sample Efficiency)
+#
+# Halving the dataset size to 450 training configurations clearly exposed the sample-efficiency gap between invariant and equivariant models:
+#
+# * **Baseline Degradation:** The Baseline model suffered noticeable degradation on half data, with Force RMSD worsening to **$1.8853\text{ kcal}/(\text{mol} \cdot \text{\AA})$**.
+# * **Equivariant Sample Efficiency:** In stark contrast, `E3MPNN_L2` demonstrated remarkable robustness:
+#   * Its Half-Data Energy RMSD (**$0.1581\text{ kcal/mol}$**) was almost identical to its Full-Data performance (**$0.1488\text{ kcal/mol}$**).
+#   * Its Half-Data Force RMSD (**$0.8019\text{ kcal}/(\text{mol} \cdot \text{\AA})$**) actually **outperformed the $l_{\text{max}}=1$ model on the FULL dataset ($0.8330$)** and was over **$2\times$ more accurate than the full-data Baseline ($1.4324$)**.
+#
+# This demonstrates the core thesis of Geometric Deep Learning: by embedding $E(3)$ symmetry constraints directly into the neural network architecture, the model does not have to spend data capacity learning that rotated molecules behave identically. As a result, higher-order equivariant architectures extract dramatically more physical insight from limited datasets than invariant baselines can extract from twice the data.
 

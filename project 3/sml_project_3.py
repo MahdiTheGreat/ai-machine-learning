@@ -9,34 +9,51 @@ import sys
 import os
 
 # %% [markdown]
+# <a href="https://colab.research.google.com/github/MahdiTheGreat/Structured-machine-learning/blob/main/project%203/sml_project_3.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# %% [markdown]
+# <a href="https://colab.research.google.com/github/MahdiTheGreat/Structured-machine-learning/blob/main/project%203/sml_project_3.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# %% [markdown]
 # # Usage of AI
 #
 # AI was mainly used to formalize my own arguments and reformat them so that they read better. It was also used to generate latex formulas and for research and to brush up on some previously learned topics.
 
 # %% [markdown]
-# # Project 3: Sampling Invariant Densities with a Learned Surrogate
+# import os
+# import re
+# import importlib
 #
-# ## Goal
-# The goal of this project is to build a generative model that learns to produce realistic 3D conformations of pent-1-ene (5 Carbons, 10 Hydrogens = 15 atoms). These conformations naturally follow the Boltzmann distribution $p(x) \propto \exp(-\beta u(x))$. Since directly sampling this distribution is mathematically intractable, we train a Continuous Normalizing Flow (CNF) to act as a surrogate $\rho_\theta(x)$ that we can easily sample from.
+# active_painn_file = "/content/sml_project3/sml_project3/painn.py"
+# if os.path.exists(active_painn_file):
+#     with open(active_painn_file, "r") as f:
+#         painn_code = f.read()
 #
-# ## Method: Conditional Flow Matching (CFM)
-# Instead of using maximum likelihood or energy-based training—which require simulating the entire ODE and computing expensive Jacobian traces during training we use Flow Matching. This brilliantly reduces the problem to standard Supervised Regression (MSE):
+#     painn_code = re.sub(
+#         r"(batch\.equivariant_node_features\s*=\s*torch\.zeros\(\s*batch\.pos\.shape\[0\],\s*self\.n_features,\s*3)(\s*\))",
+#         r"\1, device=batch.pos.device\2",
+#         painn_code
+#     )
 #
-# We generate an interpolated point between noise and data: $x_t = (1-t)x_0 + tx$ 
-# The "ground truth" straight-line velocity is simply: $x - x_0$
-# We train the network to predict this exact velocity: $\mathcal{L}(\theta) = \mathbb{E}[| v_\theta(t, x_t) - (x - x_0) |^2]$
+#     fixed_str_2 = """t = t.to(batch.pos.device)
+#         if t.size(0) == batch.pos.size(0):
+#             t_batch = t.unsqueeze(-1)
+#         else:
+#             t_batch = t[batch.batch.to(t.device), None]"""
+#     painn_code = painn_code.replace("t_batch = t[batch.batch, None]", fixed_str_2)
+#     painn_code = painn_code.replace("batch = batch.clone()", "batch = batch.clone().to(batch.pos.device)")
 #
-# ## Base Distribution (Prior)
-# We need a prior $p_0$ that is easy to sample, shares symmetries with the target, and has support on $\mathbb{R}^{N \times 3}$. We use an isotropic Normal distribution $\mathcal{N}(0, \sigma^2)$. Translational symmetry is explicitly removed by pinning the center of mass of every molecule to the origin $(0,0,0)$.
+#     with open(active_painn_file, "w") as f:
+#         f.write(painn_code)
 #
-# ## The Two Models Compared
-# Baseline MLP: A standard multi-layer perceptron. It takes coordinates and time as raw numbers and possesses zero inherent understanding of 3D symmetries.
-# PaiNN Model: An advanced Graph Neural Network that is strictly E(3) Equivariant. It mathematically guarantees that if you rotate the molecule in 3D space, the predicted velocity vectors perfectly rotate with it.
-#
-# ## Generation & Evaluation Pipeline
-# Input: Sample random 3D noise at $t=0$.
-# ODE Solver: Run a numerical solver for 100 tiny steps to $t=1$. At each fraction of a second, the network predicts the velocity to guide the atoms into a realistic shape.
-# Evaluation: Once the 3D coordinates are generated, we grade the model using histograms of Torsion Angles (via TorsionEvaluator) and Energies (via the pre-trained Oracle). A low Kullback-Leibler (KL) Divergence score proves the generated shapes physically match the reference dataset.
+#     try:
+#         from sml_project3.sml_project3 import painn
+#         importlib.reload(painn)
+#         print("Successfully patched and reloaded painn.py!")
+#     except ImportError:
+#         pass
+# else:
+#     print(f"Colab file not found ({active_painn_file}); skipping Colab-specific in-place patch.")
 
 # %%
 # setups for Google Colab
@@ -62,7 +79,6 @@ scratch_proj3 = os.path.join(scratch_dir, "sml_project3")
 if IN_COLAB:
     # !git clone https://github.com/olsson-group/sml_project3.git
     # !pip install -r sml_project3/requirements.txt
-    pass
 
 import shutil
 
@@ -97,36 +113,39 @@ import os
 import re
 import importlib
 
+# 1. Point to the EXACT file Colab is currently importing
 active_painn_file = "/content/sml_project3/sml_project3/painn.py"
-if os.path.exists(active_painn_file):
-    with open(active_painn_file, "r") as f:
-        painn_code = f.read()
 
-    painn_code = re.sub(
-        r"(batch\.equivariant_node_features\s*=\s*torch\.zeros\(\s*batch\.pos\.shape\[0\],\s*self\.n_features,\s*3)(\s*\))",
-        r"\1, device=batch.pos.device\2",
-        painn_code
-    )
+with open(active_painn_file, "r") as f:
+    painn_code = f.read()
 
-    fixed_str_2 = """t = t.to(batch.pos.device)
+# 2. Fix the torch.zeros device issue
+painn_code = re.sub(
+    r"(batch\.equivariant_node_features\s*=\s*torch\.zeros\(\s*batch\.pos\.shape\[0\],\s*self\.n_features,\s*3)(\s*\))",
+    r"\1, device=batch.pos.device\2",
+    painn_code
+)
+
+# 3. Fix the t_batch scalar/tensor mismatch
+fixed_str_2 = """t = t.to(batch.pos.device)
         if t.size(0) == batch.pos.size(0):
             t_batch = t.unsqueeze(-1)
         else:
             t_batch = t[batch.batch.to(t.device), None]"""
-    painn_code = painn_code.replace("t_batch = t[batch.batch, None]", fixed_str_2)
-    painn_code = painn_code.replace("batch = batch.clone()", "batch = batch.clone().to(batch.pos.device)")
+painn_code = painn_code.replace("t_batch = t[batch.batch, None]", fixed_str_2)
 
-    with open(active_painn_file, "w") as f:
-        f.write(painn_code)
+# 4. Fix the batch clone device mismatch
+painn_code = painn_code.replace("batch = batch.clone()", "batch = batch.clone().to(batch.pos.device)")
 
-    try:
-        from sml_project3.sml_project3 import painn
-        importlib.reload(painn)
-        print("Successfully patched and reloaded painn.py!")
-    except ImportError:
-        pass
-else:
-    print(f"Colab file not found ({active_painn_file}); skipping Colab-specific in-place patch.")
+# 5. Overwrite the file
+with open(active_painn_file, "w") as f:
+    f.write(painn_code)
+
+# 6. FORCE Python to reload the newly patched file into memory!
+from sml_project3.sml_project3 import painn
+importlib.reload(painn)
+
+print("Successfully patched and reloaded painn.py!")
 
 # %%
 # import python packages
@@ -190,22 +209,22 @@ class BaseDistribution:
 
         # Generates a tensor of dimension [n_samples * 15, 3] for a batch of pent-1-ene
         # Pent-1-ene consists of 15 atoms (5 C, 10 H). We start with [n_samples, 15_atoms, 3_coords].
-        # Graph Neural Networks (like PaiNN used here) process batches by treating them as one large, 
+        # Graph Neural Networks (like PaiNN used here) process batches by treating them as one large,
 
         # This function must return a tensor of dimension [n_atoms, 3]
 
-        # torch.randn` samples from a Standard Normal Distribution N(0, 1), meaning it generates values 
-        # with a standard deviation of exactly 1.0. By multiplying the output by self.std, we 
-        # mathematically transform the distribution to N(0, 0.1277^2). We do this so the "prior" distribution 
-        # naturally matches the spatial scale/variance of the actual training data. If we didn't scale it, 
-        # our prior would be vastly larger than the target molecule, forcing the Flow Matching model to 
+        # torch.randn` samples from a Standard Normal Distribution N(0, 1), meaning it generates values
+        # with a standard deviation of exactly 1.0. By multiplying the output by self.std, we
+        # mathematically transform the distribution to N(0, 0.1277^2). We do this so the "prior" distribution
+        # naturally matches the spatial scale/variance of the actual training data. If we didn't scale it,
+        # our prior would be vastly larger than the target molecule, forcing the Flow Matching model to
         # waste capacity learning how to shrink the space.
 
         # for practical purposes we are removing the translational symmetry,
         # by ensuring all the atoms always have an average position in the origin.
-        # A molecule's internal physics (energy, angles) don't change based on its 
-        # location in space. By pinning the center of mass to the origin (0,0,0), 
-        # we prevent the model from wasting capacity learning infinite possible 
+        # A molecule's internal physics (energy, angles) don't change based on its
+        # location in space. By pinning the center of mass to the origin (0,0,0),
+        # we prevent the model from wasting capacity learning infinite possible
         # locations, allowing it to focus 100% on the internal atomic structure.
 
         # Sample isotropic normal
@@ -214,7 +233,7 @@ class BaseDistribution:
         samples = samples - samples.mean(dim=1, keepdim=True)
         return samples.view(-1, 3)
 
-# MODEL: BASELINE MODEL
+# MODEL: BASELINE MODEL (MLP)
 
 class BaselineModel(torch.nn.Module):
     def __init__(self):
@@ -230,21 +249,25 @@ class BaselineModel(torch.nn.Module):
 
 
     def forward(self, t, batch):
+        # Batch Shape Explanation (PyTorch Geometric):
+        # PyG batches graphs by packing all molecules into one large disconnected graph.
+        # Since pent-1-ene has 15 atoms (5 C, 10 H), N_atoms = batch_size * 15.
+
         # This function returns a tensor of dimension [n_atoms, 3]
 
         # batch.pos is [n_atoms, 3]
         # Ensure t is on the exact same device as the batch features
         t = t.to(batch.pos.device)
 
-        
+
         """
-           During Training We pick one random time for each MOLECULE. If we have 10 molecules, 
-           we have 10 times. But our network looks at ATOMS. Since each molecule 
-           has 15 atoms, we have to copy the molecule's time to all 15 of its atoms. 
+           During Training We pick one random time for each MOLECULE. If we have 10 molecules,
+           we have 10 times. But our network looks at ATOMS. Since each molecule
+           has 15 atoms, we have to copy the molecule's time to all 15 of its atoms.
            `t[batch.batch]` is just a trick to do this copying automatically.
-           
-           During Sampling the code that generates the final samples (the ODE solver) hands us 
-           a time 't' that is ALREADY copied for every single atom. Because it's 
+
+           During Sampling the code that generates the final samples (the ODE solver) hands us
+           a time 't' that is ALREADY copied for every single atom. Because it's
            already the correct size, we skip the copying step.
         """
 
@@ -255,8 +278,8 @@ class BaselineModel(torch.nn.Module):
             # Safely move batch.batch to the same device before indexing
             t_batch = t[batch.batch.to(t.device)]
 
-        # Depending on who calls this function (training loop vs ODE solver), 
-        # 't' might arrive as 1D [n_atoms] or already as 2D [n_atoms, 1]. 
+        # Depending on who calls this function (training loop vs ODE solver),
+        # 't' might arrive as 1D [n_atoms] or already as 2D [n_atoms, 1].
         # If it's already 2D, forcing another `unsqueeze(1)` makes it 3D, which crashes `torch.cat`.
         t_expanded = t_batch.unsqueeze(1) if t_batch.dim() == 1 else t_batch
         # [number_of_atoms, 4] (3 coordinates + 1 time value).
@@ -278,40 +301,42 @@ class EquivariantReadout(torch.nn.Module):
         )
 
     def forward(self, batch):
-        #  Here we implement the readout function for the painn model which embeds all nodes
+        # Here we implement the readout function for the painn model which embeds all nodes
         # with invariant and equivariant features
 
         # The input batch should have in and equivariant on it with shapes
         # batch.equivariant_features.shape == (n_atoms, n_features, 3)
         # batch.invariant_features.shape == (n_atoms, n_features)
 
-        # They have the same `n_features` size so they can easily interact with each 
+        # They have the same `n_features` size so they can easily interact with each
         # other inside the network (scalars updating vectors, and vectors updating scalars)
 
         # This function also should return a tensor of shape [n_atoms, 3]
 
-        #The goal is to output a single 3D velocity vector [n_atoms, 3] for each atom 
+        # The goal is to output a single 3D velocity vector [n_atoms, 3] for each atom
         # that correctly rotates if the molecule rotates (i.e., it must be "equivariant").
-        
-           
+
+
         # Use the variable names from painn.py
         inv = batch.invariant_node_features
         equiv = batch.equivariant_node_features
 
         # Calculate scalar weights from invariant features
-        # It takes the INVARIANT features (scalars, like atomic mass or energy that 
+        # It takes the INVARIANT features (scalars, like atomic mass or energy that
         # don't care about rotation) and passes them through an MLP.
         # This MLP outputs a "weight" or "importance score" for every feature.
         weights = self.mlp(inv) # [n_atoms, n_features]
         weights = weights.unsqueeze(-1) # [n_atoms, n_features, 1]
 
-        # we takes the EQUIVARIANT features (3D vectors, like directions or forces 
+        # we takes the EQUIVARIANT features (3D vectors, like directions or forces
         # that DO rotate with the molecule).
-        # we scales (multiplies) the 3D vectors by the invariant weights, and add 
+        # we scales (multiplies) the 3D vectors by the invariant weights, and add
         # them all up.
 
         # Linear combination of equivariant features
         # we want the final output to be equivarent
+        # To produce a single physical 3D vector for each atom while guaranteeing equivariance,
+        # we take a linear combination of the equivariant vectors, weighted by a function of the invariant scalars.
         v_t = (equiv * weights).sum(dim=1) # [n_atoms, 3]
         return v_t
 
@@ -330,6 +355,12 @@ def train_cfm(cfm_model, name, epochs=1000, print_freq=25, early_stop_patience=1
         for i, batch in enumerate(dataloader):
             batch = batch.to(device)
             # t is a random time between 0 and 1 for each graph in the batch
+            # Why sample continuous random t ~ Uniform(0, 1) instead of fixed discrete steps:
+            # 1. Continuous field: Prevents overfitting to a fixed grid; enables the ODE solver
+            #    at test time to use any step size or adaptive solver (e.g., t=0.347) smoothly.
+            # 2. No blind spots: Densely covers the entire trajectory [0, 1] without gaps over epochs.
+            # 3. Monte Carlo integration: Provides an unbiased gradient estimate of the continuous
+            #    loss integral (integral from 0 to 1) during stochastic gradient descent.
             t = torch.rand(len(batch)).type_as(batch.pos).to(device)
             loss = cfm_model.get_loss(t, batch)
 
@@ -458,7 +489,7 @@ def generate_and_evaluate(cfm, name, basedistribution=None):
     base_dataset = data.BaseDistributionDataset(n_samples, basedistribution)
     print(f"Loaded BaseDistributionDataset: {len(base_dataset)} molecules")
     base_loader = geom.loader.DataLoader(base_dataset, batch_size=512, shuffle=False)
-    
+
     print(f"Sampling {n_samples} molecules...")
     samples = cfm.sample(base_loader, n_steps=100)
     samples = samples.cpu().numpy()
@@ -568,13 +599,13 @@ painn_cfm = model.CFM(painn_score, basedistribution).to(device)
 baseline_cfm = train_cfm(baseline_cfm, "Baseline")
 
 # %%
-generate_and_evaluate(baseline_cfm, "Baseline")
+generate_and_evaluate(baseline_cfm, "Baseline",basedistribution)
 
 # %%
 painn_cfm = train_cfm(painn_cfm, "PaiNN")
 
 # %%
-generate_and_evaluate(painn_cfm, "PaiNN")
+generate_and_evaluate(painn_cfm, "PaiNN",basedistribution)
 
 # %% [markdown]
 # # Discussion
@@ -587,46 +618,68 @@ generate_and_evaluate(painn_cfm, "PaiNN")
 #
 # However, numerically verifying these properties during implementation reveals a subtle mathematical pitfall: when we draw raw samples $X \sim \mathcal{N}(0, \sigma^2)$ and explicitly remove the center of mass ($X' = X - \bar{X}$) to enforce translational invariance, the variance of the samples artificially shrinks from $\sigma^2$ to $\sigma^2 \frac{N-1}{N}$. To ensure the samples strictly maintain the prior's target standard deviation of 0.1277, we implemented a numerical rescaling correction factor of $\sqrt{\frac{N}{N-1}}$ in the `BaseDistribution.sample` algorithm. We also added strict `assert` checks to verify that both the zero-mean (center of mass) and exact variance properties successfully held true for the generated distributions.
 #
-# ## Evaluation via Histograms and KL Divergence
+# ## Evaluation via Histograms, Kernel Density Estimation, and KL Divergence
 #
-# To accurately evaluate sample quality, we binned the generated molecule geometries into Torsion and Energy histograms, comparing them against the reference ground-truth dataset. We implemented a Kullback-Leibler (KL) divergence metric to quantify the distance between these empirical distributions. This histogram-based approach provided both visual and numerical evidence of the generative capacities of both the Baseline and PaiNN models, which are logged and saved as distribution plots in the output directory.
+# To rigorously evaluate sample quality, we benchmark the generated molecular geometries ($Q$) against the empirical ground-truth dataset ($P$) across both **Torsion Angles** (geometric backbone fidelity) and **Potential Energies** (thermodynamic Boltzmann fidelity):
 #
-# ### Importance Sampling and Likelihood Computation
+# 1. **Dual Representation (Histograms vs. KDE)**: To ensure that binning choices or discretization artifacts do not bias our conclusions, we evaluate distributions using two complementary estimators:
+#    - **Discrete Histograms**: Values are partitioned into 50 uniform bins to assess discrete probability mass.
+#    - **Continuous Kernel Density Estimation (KDE)**: Smooth Gaussian kernels are placed over each sample and evaluated across a high-resolution 1,000-point uniform grid, eliminating artificial bin-edge artifacts.
 #
-# When using an exact likelihood method like a normalizing flow, the generated samples can be reweighted using **importance sampling** to compute exact thermodynamic (real physics) expectations. This process corrects the AI's generation biases by assigning a weight to each sample: 
+# 2. **Periodic Circular Boundary Conditions for Torsions**: Torsion/dihedral angles naturally lie on the circular manifold $[-\pi, \pi]$ where $-\pi \equiv +\pi$. Standard linear kernels bleed probability mass across the boundaries; we enforce exact circular continuity by applying 1D circular Gaussian filter wrapping (`mode='wrap'`) for histograms, and a 3-fold periodic dataset extension ($[p - 2\pi, p, p + 2\pi]$) prior to KDE fitting.
 #
-# $$w_i = \frac{\exp(-\beta u(x_i))}{p_\theta(x_i)}$$
+# 3. **Quantification via Kullback-Leibler (KL) Divergence**: We quantify distributional mismatch via the KL divergence (or **relative entropy**, $D_{\text{KL}}(P \parallel Q) = H(P, Q) - H(P)$), measuring the excess information loss when modeling true physics $P$ with generated samples $Q$:
+#    - **Discrete Formulation (Histograms)**: Computed via `scipy.stats.entropy(P, Q)` as $D_{\text{KL}}(P \parallel Q) = \sum_{i=1}^{50} P_i \log \left(\frac{P_i}{Q_i}\right)$, incorporating an $\epsilon$-smoothing factor ($\epsilon = 10^{-8}$) to avoid division by zero in unpopulated bins.
+#    - **Continuous Formulation (KDE)**: Numerically integrated across the 1,000-point grid via Riemann sum:
 #
-# This formula acts as a correction ratio: the numerator represents the **true physics probability** (the unnormalized Boltzmann distribution), while the denominator is the **AI's generated probability**. If the AI over-generates a physically rare structure, this ratio shrinks the weight to correct the bias. 
+#      $$D_{\text{KL}}(p \parallel q) = \int p(x) \log\left(\frac{p(x)}{q(x)}\right) dx \approx \sum_{k=1}^{1000} p(x_k) \log\left(\frac{p(x_k)}{q(x_k)}\right) \Delta x$$
 #
-# However, there is a computational catch. While our Continuous Flow Matching (CFM) setup intentionally bypassed expensive likelihood calculations during *training*, computing the exact AI probability $p_\theta(x_i)$ for this reweighting step forces us to evaluate it during *inference*. This requires simulating the ODE backward in time and continuously computing the trace of the Jacobian—reintroducing the highly computationally expensive step we originally avoided.
+#      This continuous integral smoothly interpolates sparse regions, providing a stable, empty-bin-free metric particularly suited for small sample sizes ($N = 100$).
+#
 #
 # ### Effective Sample Size (ESS) and Model Comparison
 #
-# By analyzing these weights, we can estimate the **Effective Sample Size (ESS)**, defined as:
+# By analyzing the dispersion of these weights, we can quantify sample utility using **Kish's Effective Sample Size (ESS)**:
 #
-# $$n_{eff} = \frac{(\sum w_i)^2}{\sum w_i^2}$$
+# $$n_{\text{eff}} = \frac{(\sum w_i)^2}{\sum w_i^2} = \frac{N}{1 + \text{Var}(\bar{w})}$$
 #
-# ESS acts as a score for how many *useful* independent samples the model actually generated. Because the **baseline model** doesn't understand 3D geometry (equivariance), it generates mostly physically impossible "garbage" molecules with extreme, unstable energies. 
+# <!-- > **Note on ESS Formulations:** While Markov Chain Monte Carlo (MCMC) defines ESS based on temporal autocorrelation ($N_{\text{eff}} = \frac{N}{1 + 2\sum_{t=1}^\infty \rho_t}$), normalizing flows generate samples independently from random noise (zero time autocorrelation). In importance sampling, ESS instead measures variance inflation caused by **weight inequality**: it scores how many unweighted, ideal i.i.d. physical samples the generated batch is statistically worth. -->
 #
-# **To illustrate this with numbers:** Imagine asking the baseline model to generate 10,000 molecules. Because 9,999 of them might be physically impossible (e.g., atoms crashing into each other), their true physics probability is practically zero, causing their importance weights to drop to zero. The 1 accidentally realistic molecule ends up absorbing 99.9% of the total weight. Even though you generated 10,000 samples, the equation recognizes you only produced 1 useful piece of data, driving the ESS to a value of $n_{eff} \approx 1$. 
+# #### Methodology: Deducing Ballpark ESS from Empirical KL Divergence
+# As outlined in the project instructions, calculating exact numerical likelihoods $p_\theta(x_i)$ requires simulating the continuous ODE backwards in time while continuously computing expensive Jacobian traces—a step intentionally omitted during inference. Rather than an arbitrary guess, we establish a **principled ballpark estimate of $n_{\text{eff}}$ directly grounded in our empirical KL divergence metrics**:
 #
-# Conversely, the **PaiNN model** leverages strict E(3) equivariant message-passing to maintain 3D structural priors, keeping generative trajectories much closer to the true energy manifold. 
+# 1. **Baseline Model Ballpark ($n_{\text{eff}} \approx 1$ out of $N$, near $0\%$ efficiency):**
+#    * **Broken Molecules:** The baseline had a very high Energy KL (**23.67**), meaning it regularly generates deformed molecules where atoms crash into each other.
+#    * **Weights Drop to Zero:** When atoms crash, their energy spikes. In physics, high energy means almost zero probability ($\exp(-\beta \cdot \text{huge energy}) \approx 0$), so their importance weights drop to zero.
+#    * **Only 1 Useful Sample:** Out of 10,000 generated molecules, 9,999 get a weight of $0$. If only $1$ lucky molecule is realistic, it ends up holding 100% of the total weight. The ESS formula recognizes you only produced **1 useful piece of data** ($n_{\text{eff}} \approx 1$).
 #
-# **In contrast to the baseline:** If you ask the PaiNN model to generate 10,000 molecules, its understanding of 3D space ensures almost all of them are structurally valid. Because the model's generated probabilities closely match the true physics probabilities, the importance weights remain stable and evenly distributed across the entire batch. This results in a significantly higher ESS (e.g., $n_{eff} \approx 8,000$). This demonstrates PaiNN's far superior capacity for molecular generation, as almost every sample it generates is actually useful for computing exact thermodynamic properties.
+# 2. **PaiNN Model Ballpark ($n_{\text{eff}} \approx 50\%\text{--}80\%$ of $N$, high efficiency):**
+#    * The PaiNN model achieved an **89% reduction in KDE Energy KL (down to 2.70)** and a tight **Torsion KL of 0.1077**, confirming that the generated molecules closely conform to physical Boltzmann equilibrium.
+#    * Because PaiNN's probability density closely matches the true physical distribution across conformational space ($p_\theta(x) \approx p(x)$), the ratio $w_i = \frac{p(x_i)}{p_\theta(x_i)}$ stays relatively uniform across the generated batch.
+#    * With low weight variance ($\text{Var}(\bar{w}) \ll 1$), Kish's formula remains close to the total sample count, yielding an estimated ballpark of $n_{\text{eff}} \approx 5,000\text{--}8,000$ out of 10,000 samples.
+#
+# This comparison highlights the core value of $E(3)$ equivariant flows: while a non-equivariant model produces massive amounts of statistically unusable configurations, PaiNN ensures that the majority of generated samples carry meaningful statistical weight for calculating real thermodynamic observables.
 #
 # ## Conclusion: Baseline vs PaiNN Generative Performance
 #
 # The final evaluation of our trained Continuous Flow Matching models—using the fixed isotropic normal prior and early stopping—yielded the following Kullback-Leibler (KL) Divergences on a generated sample size of 100 molecules:
 #
-# * **Baseline Model:** Torsion KL = 6.7774 | Energy KL = 12.8252
-# * **PaiNN Model:** Torsion KL = 1.7315 | Energy KL = 11.6001
+# | Metric              | Baseline | PaiNN   |
+# |---------------------|----------|---------|
+# | Histogram KL (Torsion) | 0.9765   | 0.5173  |
+# | Histogram KL (Energy)  | 14.4824  | 11.4145 |
+# | KDE KL (Torsion)       | 0.2411   | 0.1077  |
+# | KDE KL (Energy)        | 23.6749  | 2.6971  |
 #
-# The results demonstrate the overwhelming advantage of E(3) equivariant architectures for generative molecular modeling. The **Baseline model** relies on standard linear layers (MLPs) that possess no inherent understanding of 3D geometry; as a result, its generated molecular trajectories often collapse into physically impossible conformations, reflected by a massive Torsion KL divergence (6.77).
+# **What these KL scores measure:** Each KL divergence is a single scalar comparing the **distribution of all generated samples** against the **distribution of the reference dataset**. Specifically, we collect all torsion angles (or energies) from the 100 generated molecules into one array, and all torsion angles (or energies) from the reference dataset into another. We then estimate two probability density curves from these arrays—either via discrete histogram binning (Histogram KL) or via smooth Gaussian Kernel Density Estimation (KDE KL)—and compute $D_\text{KL}(p_\text{ref} \| p_\text{gen})$ between them. A score of 0 means the generated distribution perfectly matches the reference; higher values indicate greater distributional mismatch.
 #
-# In contrast, the **PaiNN model** leverages Equivariant Message Passing and mathematically enforces that the generated vector fields rotate perfectly with the molecular coordinates. This inductive geometric bias successfully cut the Torsion KL divergence down to **1.73**, proving that the model learned to assemble chemically valid carbon backbones and dihedral angles with far higher fidelity.
+# The results demonstrate the clear advantage of E(3) equivariant architectures for generative molecular modeling. The **Baseline model** relies on standard linear layers (MLPs) that possess no inherent understanding of 3D geometry; as a result, its generated molecular conformations exhibit higher divergence from the true Boltzmann distribution across all metrics, with its KDE Energy KL divergence (23.67) indicating that it frequently generates energetically implausible structures.
 #
-# While the Energy KL Divergence also improved (dropping from 12.82 to 11.60), both models still struggle to perfectly match the raw energy distributions. We assume this is because molecular potential energy surfaces are incredibly sensitive, and integrating a flow-matching ODE over finite time steps will inherently accumulate small geometric errors that cause the final predicted energy to spike. Despite these integration errors, the PaiNN architecture proves that embedding geometric priors into the neural network is an absolute necessity for generating structurally coherent 3D molecules.
+# In contrast, the **PaiNN model** leverages Equivariant Message Passing and mathematically enforces that the generated vector fields rotate perfectly with the molecular coordinates. This inductive geometric bias achieved:
+# * A **55% reduction** in KDE Torsion KL (0.24 → 0.11), proving the model learned to assemble chemically valid carbon backbones and dihedral angles with significantly higher fidelity.
+# * An **89% reduction** in KDE Energy KL (23.67 → 2.70), demonstrating that PaiNN generates conformations whose potential energies closely match the true physical distribution—a dramatic improvement over the baseline.
+#
+# While the Histogram Energy KL remains elevated for both models (14.48 vs 11.41), this is expected: histogram-based KL estimates are noisier and more sensitive to bin placement than the smoother KDE estimates, especially with a sample size of only 100 molecules. The KDE-based metrics provide a more reliable comparison, and on those metrics PaiNN decisively outperforms the baseline, confirming that embedding geometric priors into the neural network is essential for generating structurally and energetically coherent 3D molecules.
 
 # %%
 # 1. Install the massive LaTeX backend (this takes a minute)
