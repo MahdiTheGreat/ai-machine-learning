@@ -60,6 +60,10 @@ A comprehensive monorepo consolidating machine learning systems, deep learning a
 ---
 
 ### 7. Data Engineering, Web Scraping & Unsupervised Learning
+* **Fuzzy C-Means Clustering ([`FCM`](projects/FCM/)):**  
+  Unsupervised soft clustering engine implementing fuzzy membership matrices ($\mu_{ik} \in [0, 1]$), weighted centroid updates, objective cost function minimization, and elbow method evaluation across multidimensional benchmark datasets.
+* **Signal Processing & Audio Fingerprinting ([`SignalProcessing`](projects/SignalProcessing/)):**  
+  Digital and analog signal processing suite featuring continuous/discrete signal visualization, 1D mathematical convolution, manual Fourier series decomposition and coefficient extraction, audio frequency noiseprinting, and Shazam-style acoustic fingerprinting and similarity retrieval.
 * **Real Estate Web Scraping & Market Analytics ([`RealEstate_Scraping_Analytics`](projects/RealEstate_Scraping_Analytics/)):**  
   Engineered automated web scraping pipelines using BeautifulSoup to extract, clean, and normalize real estate listing data. Performed exploratory data analysis through histograms, scatter correlation plots, and quartile distributions.
 * **Morphological Seed Kernel Clustering ([`Wheat_Clustering`](projects/Wheat_Clustering/)):**  
@@ -88,6 +92,7 @@ ai-machine-learning/
     ├── DependencyRatio/
     ├── DiabetesClassifier/
     ├── Diagnostic-Systems/
+    ├── FCM/
     ├── Game-playing-systems/
     ├── information-retrieval/
     │   ├── RankedSearchEngine/
@@ -98,6 +103,7 @@ ai-machine-learning/
     ├── RealEstate_Scraping_Analytics/
     ├── RecommenderSystem/
     ├── Semantic-Segmentation-with-Deep-Learning/
+    ├── SignalProcessing/
     ├── Spaceship_Titanic/
     ├── Spam-Ham/
     ├── Structured-machine-learning/
